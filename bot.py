@@ -6,10 +6,10 @@ from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, Callback
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Получаем токен и URL вебхука из переменных окружения
 TOKEN = os.environ.get("BOT_TOKEN")
-# Get the Render.com URL from environment variables
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL") # You will need to set this in Render
-PORT = int(os.environ.get("PORT", "8443")) # Use 8443 as a common default for webhooks if not set
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # Должно быть что-то вроде https://твой_сервис.onrender.com/
+PORT = int(os.environ.get("PORT", 443))  # Используем 443 как стандартный HTTPS-порт
 
 CHANNELS = [
     "-1002657330561",
@@ -71,15 +71,13 @@ def main() -> None:
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
 
-    # Use webhooks for deployment on Render.com
-    # Render.com will provide the PORT environment variable
-    # The WEBHOOK_URL should be your Render service's public URL
-    updater.start_webhook(listen="0.0.0.0",
-                          port=PORT,
-                          url_path=TOKEN) # Use TOKEN as the path for simplicity or a custom path
-
-    # Set the webhook URL for Telegram
-    updater.bot.set_webhook(WEBHOOK_URL + TOKEN) # Append TOKEN to the URL path
+    # Настраиваем вебхук для Render.com
+    updater.start_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TOKEN,  # Путь для вебхука (обычно это токен)
+        webhook_url=f"{WEBHOOK_URL}{TOKEN}"  # Полный URL вебхука
+    )
 
     updater.idle()
 
