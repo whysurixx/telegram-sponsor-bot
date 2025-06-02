@@ -42,8 +42,8 @@ try:
     with open(GOOGLE_CREDENTIALS_PATH, 'r') as f:
         creds_json = json.load(f)
 
-    # Обновленный scope
-    scope = ["[invalid url, do not cite] "[invalid url, do not cite]
+    # Обновленный scope с правильным синтаксисом
+    scope = ["[invalid url, do not cite]", "[invalid url, do not cite]"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
     client = gspread.authorize(creds)
     sheet = client.open_by_key("1hmm-rfUlDcA31QD04XRXIyaa_EpN8ObuHFc8cp7Rwms").sheet1
@@ -51,7 +51,6 @@ try:
 except Exception as e:
     logger.error(f"Ошибка при инициализации Google Sheets: {e}")
     raise
-
 
 # --- Конфигурация каналов ---
 CHANNELS = [
