@@ -6,7 +6,7 @@ from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, Callback
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = os.environ.get("BOT_TOKEN")  # возьмём токен из переменных окружения
+TOKEN = os.environ.get("BOT_TOKEN")
 
 CHANNELS = [
     "-1002657330561",
@@ -62,26 +62,13 @@ def check_subscription(update: Update, context: CallbackContext) -> None:
         query.message.reply_text("Похоже, ты подписался не на все каналы. Проверь ещё раз и нажми 'Я ПОДПИСАЛСЯ!'.")
 
 def main() -> None:
-    port = int(os.environ.get("PORT", "8443"))  # Render задаст порт в переменную PORT
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
 
-    # Получаем публичный URL Render-а из переменной окружения
-    webhook_url = os.environ.get("RENDER_EXTERNAL_URL")  # Render автоматически создаёт эту переменную
-
-    if webhook_url is None:
-        logger.error("RENDER_EXTERNAL_URL is not set")
-        exit(1)
-
-    # Полный URL с токеном
-    full_webhook_url = f"{webhook_url}/{TOKEN}"
-
-    updater.start_webhook(listen="0.0.0.0", port=port, url_path=TOKEN)
-    updater.bot.set_webhook(full_webhook_url)
-
+    updater.start_polling()
     updater.idle()
 
 if __name__ == "__main__":
