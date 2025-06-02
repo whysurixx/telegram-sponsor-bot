@@ -20,7 +20,6 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 443))
 
 # --- Путь к файлу с секретными учетными данными Google ---
-# Этот путь должен совпадать с "File Path", который вы указываете в Render Secret Files
 GOOGLE_CREDENTIALS_PATH = "/etc/secrets/GOOGLE_CREDENTIALS"
 
 # Проверка обязательных переменных окружения
@@ -34,7 +33,6 @@ if not TOKEN:
 # --- Настройка Google Sheets ---
 sheet = None
 try:
-    # Читаем учетные данные из секретного файла
     if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
         logger.error(f"Файл с учетными данными не найден по пути: {GOOGLE_CREDENTIALS_PATH}")
         raise FileNotFoundError(f"Файл с учетными данными не найден по пути: {GOOGLE_CREDENTIALS_PATH}")
@@ -42,7 +40,6 @@ try:
     with open(GOOGLE_CREDENTIALS_PATH, 'r') as f:
         creds_json = json.load(f)
 
-    # Обновленный scope
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
@@ -129,15 +126,21 @@ def check_subscription(update: Update, context: CallbackContext) -> None:
             break
 
     if all_subscribed:
-        context.user_data['subscribed'] = True
+        context.user_data['subscription_confirmed'] = True
+        logger.info(f"Пользователь {user_id} успешно подтвердил подписку.")
         query.message.reply_text(
             "🎉 Поздравляю! Ты подписался на все каналы.\n"
             "Теперь можешь отправить код фильма, и я найду его название! 🍿"
         )
         if 'pending_movie_code' in context.user_data:
             code = context.user_data.pop('pending_movie_code')
-            handle_movie_code_internal(query.message, context, code)
+            movie = find_movie_by_code(code)
+            if movie:
+                query.message.reply_text(f"🎥 Фильм по коду \"{code}\": \"{movie['title']}\"", parse_mode='Markdown')
+            else:
+                query.message.reply_text(f"К сожалению, фильм с кодом `{code}` не найден! Попробуй другой код.", parse_mode='Markdown')
     else:
+        logger.info(f"Пользователь {user_id} не подписан на все каналы.")
         error_message = (
             "😕 Похоже, ты подписался не на все каналы.\n"
             "Пожалуйста, проверь ещё раз и нажми '✅ Я ПОДПИСАЛСЯ!'.\n"
@@ -151,22 +154,16 @@ def find_movie_by_code(code: str) -> dict:
         return None
 
     try:
-        # Изменено: Используем get_all_values() вместо get_all_records()
-        # get_all_values() возвращает список списков, где каждый внутренний список - это строка.
         all_values = sheet.get_all_values()
-
         for row_index, row_data in enumerate(all_values):
-            # Пропускаем пустые строки или строки, в которых недостаточно столбцов
             if not row_data or len(row_data) < 2:
                 continue
-
-            # Доступ к коду (первый столбец, индекс 0) и названию (второй столбец, индекс 1)
-            # Убедитесь, что сравниваете строки со строками, обрезая пробелы
             sheet_code = row_data[0].strip()
             sheet_title = row_data[1].strip()
-
             if sheet_code == code:
+                logger.info(f"Найден фильм с кодом {code}: {sheet_title}")
                 return {"code": sheet_code, "title": sheet_title}
+        logger.info(f"Фильм с кодом {code} не найден.")
         return None
     except gspread.exceptions.APIError as e:
         logger.error(f"Ошибка API Google Sheets при доступе: {e}")
@@ -175,26 +172,27 @@ def find_movie_by_code(code: str) -> dict:
         logger.error(f"Неизвестная ошибка при доступе к Google Sheets: {e}")
         return None
 
-def handle_movie_code_internal(message, context: CallbackContext, code: str) -> None:
-    movie = find_movie_by_code(code)
-    if movie:
-        message.reply_text(f"🎥 Фильм: *{movie['title']}*", parse_mode='Markdown')
-    else:
-        message.reply_text(f"К сожалению, фильм с кодом `{code}` не найден! Попробуй другой код.", parse_mode='Markdown')
-
 def handle_movie_code(update: Update, context: CallbackContext) -> None:
     code = update.message.text.strip()
+    user_id = update.message.from_user.id
 
     if not code.isdigit():
+        logger.info(f"Пользователь {user_id} ввел нечисловой код: {code}")
         update.message.reply_text("Пожалуйста, введи только числовой код фильма. 🔢")
         return
 
-    if not context.user_data.get('subscribed'):
+    if not context.user_data.get('subscription_confirmed', False):
+        logger.info(f"Пользователь {user_id} не подтвердил подписку. Код {code} сохранен как ожидающий.")
         context.user_data['pending_movie_code'] = code
         prompt_subscribe(update, context)
         return
 
-    handle_movie_code_internal(update.message, context, code)
+    logger.info(f"Пользователь {user_id} подтвердил подписку. Обрабатываем код: {code}")
+    movie = find_movie_by_code(code)
+    if movie:
+        update.message.reply_text(f"🎥 Фильм по коду \"{code}\": \"{movie['title']}\"", parse_mode='Markdown')
+    else:
+        update.message.reply_text(f"К сожалению, фильм с кодом `{code}` не найден! Попробуй другой код.", parse_mode='Markdown')
 
 def main() -> None:
     updater = Updater(TOKEN, use_context=True)
