@@ -82,9 +82,6 @@ def check_subscription(update: Update, context: CallbackContext) -> None:
             all_subscribed = False
             break
 
-    if all_subscribed:
-        query.message.reply_text("Ты подписался на все каналы! Теперь можно продолжить поиск фильма.")
-    else:
         query.message.reply_text("Похоже, ты подписался не на все каналы. Проверь ещё раз и нажми 'Я ПОДПИСАЛСЯ!'.")
 
 def main() -> None:
