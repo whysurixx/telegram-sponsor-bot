@@ -82,6 +82,7 @@ def main() -> None:
     # Формируем полный URL вебхука
     full_webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
     logger.info(f"Setting webhook to: {full_webhook_url}")
+    logger.info(f"Using port: {PORT}")
 
     # Настраиваем вебхук
     try:
