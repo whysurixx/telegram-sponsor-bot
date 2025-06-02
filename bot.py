@@ -48,6 +48,10 @@ def start(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(welcome_text)
 
 def prompt_subscribe(update: Update, context: CallbackContext) -> None:
+    if context.user_data.get('subscribed'):
+        update.message.reply_text("Фильм не найден! Попробуй другой код.")
+        return
+
     promo_text = (
         "Чтобы продолжить поиск фильма, сначала подпишись на наших спонсоров!\n"
         "Когда сделаешь всё, нажми кнопку и мы продолжим!"
@@ -58,7 +62,7 @@ def prompt_subscribe(update: Update, context: CallbackContext) -> None:
         [InlineKeyboardButton("Канал 3 — Премии и хиты", url="https://t.me/+PAu2GRMZuUU0ZWQy")],
         [InlineKeyboardButton("Канал 4 — Кино без рекламы", url="https://t.me/+kO2CPJZgxediMmZi")],
         [InlineKeyboardButton("Канал 5 — Эксклюзивы", url="https://t.me/+DUDDSAYIDl8yN2Ni")],
-        [InlineKeyboardButton("Я ПОДПИСАЛСЯ!", callback_data="check_subscription")],
+        [InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     update.message.reply_text(promo_text, reply_markup=reply_markup)
@@ -66,7 +70,6 @@ def prompt_subscribe(update: Update, context: CallbackContext) -> None:
 def check_subscription(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     query.answer()
-
     user_id = query.from_user.id
     bot = context.bot
 
@@ -82,7 +85,15 @@ def check_subscription(update: Update, context: CallbackContext) -> None:
             all_subscribed = False
             break
 
-        query.message.reply_text("Похоже, ты подписался не на все каналы. Проверь ещё раз и нажми 'Я ПОДПИСАЛСЯ!'.")
+    if all_subscribed:
+        context.user_data['subscribed'] = True
+        query.message.reply_text(
+            "🎉 Поздравляю! Ты подписался на все каналы.\nТеперь можешь отправить код фильма, и я постараюсь его найти! 🍿"
+        )
+    else:
+        query.message.reply_text(
+            "😕 Похоже, ты подписался не на все каналы.\nПроверь ещё раз и нажми 'Я ПОДПИСАЛСЯ!'."
+        )
 
 def main() -> None:
     updater = Updater(TOKEN, use_context=True)
