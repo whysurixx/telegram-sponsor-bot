@@ -70,7 +70,7 @@ def main() -> None:
     dp.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
 
     updater.start_webhook(listen="0.0.0.0", port=8443, url_path=TOKEN)
-    updater.bot.set_webhook(f"https://YOUR_NGROK_URL/{TOKEN}")  # Замени на свой ngrok URL
+    updater.bot.set_webhook(f"https://e77a-46-63-72-65.ngrok-free.app/{TOKEN}")
     updater.idle()
 
 if __name__ == "__main__":
