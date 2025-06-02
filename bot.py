@@ -40,19 +40,18 @@ try:
         raise FileNotFoundError(f"Файл с учетными данными не найден по пути: {GOOGLE_CREDENTIALS_PATH}")
 
     with open(GOOGLE_CREDENTIALS_PATH, 'r') as f:
-        creds_json = json.load(f) # json.load() автоматически парсит файл
+        creds_json = json.load(f)
 
-    # Scope только для Google Sheets
-    scope = ["https://www.googleapis.com/auth/spreadsheets"]
+    # Обновленный scope
+    scope = ["[invalid url, do not cite] "[invalid url, do not cite]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
     client = gspread.authorize(creds)
-    # Предполагаем, что "MovieDatabase" - это название таблицы, а sheet1 - первый лист
-    # Убедитесь, что сервисному аккаунту предоставлен доступ к этой таблице (права "Редактор" или "Читатель").
     sheet = client.open_by_key("1hmm-rfUlDcA31QD04XRXIyaa_EpN8ObuHFc8cp7Rwms").sheet1
     logger.info("Google Sheets успешно инициализирован.")
 except Exception as e:
     logger.error(f"Ошибка при инициализации Google Sheets: {e}")
     raise
+
 
 # --- Конфигурация каналов ---
 CHANNELS = [
