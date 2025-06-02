@@ -132,13 +132,12 @@ def check_subscription(update: Update, context: CallbackContext) -> None:
             "🎉 Поздравляю! Ты подписался на все каналы.\n"
             "Теперь можешь отправить код фильма, и я найду его название! 🍿"
         )
+        # REMOVED: No longer processing pending_movie_code here.
+        # The user will need to re-enter the code after this confirmation message.
         if 'pending_movie_code' in context.user_data:
-            code = context.user_data.pop('pending_movie_code')
-            movie = find_movie_by_code(code)
-            if movie:
-                query.message.reply_text(f"🎥 Фильм по коду \"{code}\": \"{movie['title']}\"", parse_mode='Markdown')
-            else:
-                query.message.reply_text(f"К сожалению, фильм с кодом `{code}` не найден! Попробуй другой код.", parse_mode='Markdown')
+            # Optionally, you might want to clear it so it's not accidentally processed later
+            # context.user_data.pop('pending_movie_code', None)
+            pass # Or just remove the whole if block
     else:
         logger.info(f"Пользователь {user_id} не подписан на все каналы.")
         error_message = (
@@ -147,6 +146,7 @@ def check_subscription(update: Update, context: CallbackContext) -> None:
         )
         query.message.reply_text(error_message, parse_mode='Markdown')
         prompt_subscribe(update, context, message_id=query.message.message_id)
+
 
 def find_movie_by_code(code: str) -> dict:
     if sheet is None:
