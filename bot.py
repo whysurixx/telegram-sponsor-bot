@@ -9,12 +9,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-if not TOKEN:
-    logger.error("TELEGRAM_TOKEN не задана в переменных окружения!")
-    exit(1)
 
+# Список ID твоих каналов
 CHANNELS = [
     "-1002657330561",
     "-1002243633174",
@@ -69,26 +66,17 @@ def check_subscription(update: Update, context: CallbackContext) -> None:
         query.message.reply_text("Похоже, ты подписался не на все каналы. Проверь ещё раз и нажми 'Я ПОДПИСАЛСЯ!'.")
 
 def main() -> None:
-    PORT = int(os.environ.get("PORT", 8443))
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
 
-    # Запуск webhook
+    PORT = int(os.environ.get("PORT", 8443))
+    RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
+
     updater.start_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN)
-
-    # Получаем публичный URL Render
-    DOMAIN = os.getenv("RENDER_EXTERNAL_URL")
-    if not DOMAIN:
-        logger.error("RENDER_EXTERNAL_URL не задана в переменных окружения!")
-        exit(1)
-
-    webhook_url = f"https://{DOMAIN}/{TOKEN}"
-    updater.bot.set_webhook(webhook_url)
-    logger.info(f"Webhook установлен на {webhook_url}")
-
+    updater.bot.set_webhook(f"https://{RENDER_EXTERNAL_URL}/{TOKEN}")
     updater.idle()
 
 if __name__ == "__main__":
