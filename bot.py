@@ -9,7 +9,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TOKEN = os.getenv("7740002133:AAEyhozv-C2iP5z4MfNZ9XmZ7kTo_TWkX74")
+TOKEN = os.getenv("7740002133:AAH0_cEnnksjOMYWQq-KuM7EC4OhlCpcXaY")
 if not TOKEN:
     logger.error("TELEGRAM_TOKEN не задана в переменных окружения!")
     exit(1)
