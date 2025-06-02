@@ -21,7 +21,7 @@ PORT = int(os.environ.get("PORT", 443))
 
 # --- Путь к файлу с секретными учетными данными Google ---
 # Этот путь должен совпадать с "File Path", который вы указываете в Render Secret Files
-GOOGLE_CREDENTIALS_PATH = "/etc/secrets/google_credentials.json"
+GOOGLE_CREDENTIALS_PATH = "/etc/secrets/GOOGLE_CREDENTIALS"
 
 # Проверка обязательных переменных окружения
 if not WEBHOOK_URL:
@@ -167,7 +167,6 @@ def check_subscription(update: Update, context: CallbackContext) -> None:
         # Снова показываем кнопки подписки, чтобы пользователь мог вернуться к ним
         prompt_subscribe(update, context, message_id=query.message.message_id)
 
-
 def find_movie_by_code(code: str) -> dict:
     """Ищет фильм по коду в Google Sheets."""
     if sheet is None:
@@ -231,7 +230,6 @@ def main() -> None:
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command & Filters.regex(r'^\d+$'), handle_movie_code))
     # Добавляем fallback для нечисловых сообщений после подписки
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, lambda u, c: u.message.reply_text("Пожалуйста, введи *только числовой* код фильма. 🔢", parse_mode='Markdown')))
-
 
     full_webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
     logger.info(f"Установка вебхука на: {full_webhook_url}")
