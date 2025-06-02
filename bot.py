@@ -1,13 +1,19 @@
+import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-TOKEN = "7740002133:AAEyhozv-C2iP5z4MfNZ9XmZ7kTo_TWkX74"
+TOKEN = os.getenv("7740002133:AAEyhozv-C2iP5z4MfNZ9XmZ7kTo_TWkX74")
+if not TOKEN:
+    logger.error("TELEGRAM_TOKEN не задана в переменных окружения!")
+    exit(1)
 
-# Список ID твоих каналов
 CHANNELS = [
     "-1002657330561",
     "-1002243633174",
@@ -27,11 +33,11 @@ def start(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(welcome_text)
 
     keyboard = [
-        [InlineKeyboardButton("Канал 1 — Смотри новинки", url="https://t.me/+8qO35jVzZVs5MjMy")],  # Замени на реальную инвайт-ссылку
-        [InlineKeyboardButton("Канал 2 — Лучше фильмы", url="https://t.me/+ZAvb9OTIrU9mOWIy")],   # Замени на реальную инвайт-ссылку
-        [InlineKeyboardButton("Канал 3 — Премии и хиты", url="https://t.me/+PAu2GRMZuUU0ZWQy")],   # Замени на реальную инвайт-ссылку
-        [InlineKeyboardButton("Канал 4 — Кино без рекламы", url="https://t.me/+kO2CPJZgxediMmZi")], # Замени на реальную инвайт-ссылку
-        [InlineKeyboardButton("Канал 5 — Эксклюзивы", url="https://t.me/+DUDDSAYIDl8yN2Ni")],      # Замени на реальную инвайт-ссылку
+        [InlineKeyboardButton("Канал 1 — Смотри новинки", url="https://t.me/+8qO35jVzZVs5MjMy")],
+        [InlineKeyboardButton("Канал 2 — Лучше фильмы", url="https://t.me/+ZAvb9OTIrU9mOWIy")],
+        [InlineKeyboardButton("Канал 3 — Премии и хиты", url="https://t.me/+PAu2GRMZuUU0ZWQy")],
+        [InlineKeyboardButton("Канал 4 — Кино без рекламы", url="https://t.me/+kO2CPJZgxediMmZi")],
+        [InlineKeyboardButton("Канал 5 — Эксклюзивы", url="https://t.me/+DUDDSAYIDl8yN2Ni")],
         [InlineKeyboardButton("Я ПОДПИСАЛСЯ!", callback_data="check_subscription")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -47,7 +53,6 @@ def check_subscription(update: Update, context: CallbackContext) -> None:
     all_subscribed = True
     for channel in CHANNELS:
         try:
-            # Проверяем подписку на канал
             member = bot.get_chat_member(chat_id=channel, user_id=user_id)
             if member.status not in ["member", "administrator", "creator"]:
                 all_subscribed = False
@@ -63,14 +68,26 @@ def check_subscription(update: Update, context: CallbackContext) -> None:
         query.message.reply_text("Похоже, ты подписался не на все каналы. Проверь ещё раз и нажми 'Я ПОДПИСАЛСЯ!'.")
 
 def main() -> None:
+    PORT = int(os.environ.get("PORT", 8443))
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
 
-    updater.start_webhook(listen="0.0.0.0", port=8443, url_path=TOKEN)
-    updater.bot.set_webhook(f"https://e77a-46-63-72-65.ngrok-free.app/{TOKEN}")
+    # Запуск webhook
+    updater.start_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN)
+
+    # Получаем публичный URL Render
+    DOMAIN = os.getenv("RENDER_EXTERNAL_URL")
+    if not DOMAIN:
+        logger.error("RENDER_EXTERNAL_URL не задана в переменных окружения!")
+        exit(1)
+
+    webhook_url = f"https://{DOMAIN}/{TOKEN}"
+    updater.bot.set_webhook(webhook_url)
+    logger.info(f"Webhook установлен на {webhook_url}")
+
     updater.idle()
 
 if __name__ == "__main__":
