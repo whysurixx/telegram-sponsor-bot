@@ -8,8 +8,16 @@ logger = logging.getLogger(__name__)
 
 # Получаем токен и URL вебхука из переменных окружения
 TOKEN = os.environ.get("BOT_TOKEN")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # Должно быть что-то вроде https://твой_сервис.onrender.com/
-PORT = int(os.environ.get("PORT", 443))  # Используем 443 как стандартный HTTPS-порт
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # Должно быть https://telegram-sponsor-bot.onrender.com
+PORT = int(os.environ.get("PORT", 443))  # Используем 443 для HTTPS
+
+if not WEBHOOK_URL:
+    logger.error("WEBHOOK_URL не задан в переменных окружения!")
+    raise ValueError("WEBHOOK_URL не задан в переменных окружения!")
+
+if not TOKEN:
+    logger.error("BOT_TOKEN не задан в переменных окружения!")
+    raise ValueError("BOT_TOKEN не задан в переменных окружения!")
 
 CHANNELS = [
     "-1002657330561",
@@ -71,13 +79,22 @@ def main() -> None:
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
 
-    # Настраиваем вебхук для Render.com
-    updater.start_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,  # Путь для вебхука (обычно это токен)
-        webhook_url=f"{WEBHOOK_URL}{TOKEN}"  # Полный URL вебхука
-    )
+    # Формируем полный URL вебхука
+    full_webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
+    logger.info(f"Setting webhook to: {full_webhook_url}")
+
+    # Настраиваем вебхук
+    try:
+        updater.start_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TOKEN,
+            webhook_url=full_webhook_url
+        )
+        logger.info("Webhook started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start webhook: {e}")
+        raise
 
     updater.idle()
 
