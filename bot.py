@@ -42,7 +42,7 @@ try:
     with open(GOOGLE_CREDENTIALS_PATH, 'r') as f:
         creds_json = json.load(f) # json.load() автоматически парсит файл
 
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/spreadsheets"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
     client = gspread.authorize(creds)
     # Предполагаем, что "MovieDatabase" - это название таблицы, а sheet1 - первый лист
