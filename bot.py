@@ -48,7 +48,7 @@ try:
     client = gspread.authorize(creds)
     # Предполагаем, что "MovieDatabase" - это название таблицы, а sheet1 - первый лист
     # Убедитесь, что сервисному аккаунту предоставлен доступ к этой таблице (права "Редактор" или "Читатель").
-    sheet = client.open("MovieDatabase").sheet1
+    sheet = client.open_by_key("1hmm-rfUlDcA31QD04XRXIyaa_EpN8ObuHFc8cp7Rwms").sheet1
     logger.info("Google Sheets успешно инициализирован.")
 except Exception as e:
     logger.error(f"Ошибка при инициализации Google Sheets: {e}")
