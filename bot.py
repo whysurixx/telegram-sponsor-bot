@@ -151,10 +151,22 @@ def find_movie_by_code(code: str) -> dict:
         return None
 
     try:
-        data = sheet.get_all_records()
-        for row in data:
-            if str(row.get("Код")) == code:
-                return {"code": row.get("Код"), "title": row.get("Название")}
+        # Изменено: Используем get_all_values() вместо get_all_records()
+        # get_all_values() возвращает список списков, где каждый внутренний список - это строка.
+        all_values = sheet.get_all_values()
+
+        for row_index, row_data in enumerate(all_values):
+            # Пропускаем пустые строки или строки, в которых недостаточно столбцов
+            if not row_data or len(row_data) < 2:
+                continue
+
+            # Доступ к коду (первый столбец, индекс 0) и названию (второй столбец, индекс 1)
+            # Убедитесь, что сравниваете строки со строками, обрезая пробелы
+            sheet_code = row_data[0].strip()
+            sheet_title = row_data[1].strip()
+
+            if sheet_code == code:
+                return {"code": sheet_code, "title": sheet_title}
         return None
     except gspread.exceptions.APIError as e:
         logger.error(f"Ошибка API Google Sheets при доступе: {e}")
