@@ -269,6 +269,7 @@ def get_user_data(user_id: int) -> Optional[Dict[str, str]]:
         return None
     try:
         all_values = user_sheet.get_all_values()[1:]  # Skip header
+        logger.info(f"get_user_data: all_values = {all_values}")
         for row in all_values:
             if not row or len(row) < 1:
                 continue
@@ -294,14 +295,10 @@ def add_user(user_id: int, username: str, first_name: str, search_queries: int, 
         logger.error("Users sheet not initialized.")
         return
     try:
-        user_sheet.append_row([
-            str(user_id),
-            username,
-            first_name,
-            str(search_queries),
-            str(invited_users)
-        ])
-        logger.info(f"Added user {user_id} to Users sheet with 5 search queries.")
+        row_to_add = [str(user_id), username, first_name, str(search_queries), str(invited_users)]
+        logger.info(f"Adding row to Users sheet: {row_to_add}")
+        user_sheet.append_row(row_to_add)
+        logger.info(f"Added user {user_id} to Users sheet with {search_queries} search queries.")
     except gspread.exceptions.APIError as e:
         logger.error(f"Google Sheets API error in add_user: {e}")
     except Exception as e:
