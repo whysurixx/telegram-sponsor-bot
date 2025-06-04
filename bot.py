@@ -68,11 +68,12 @@ try:
     with open(GOOGLE_CREDENTIALS_PATH, 'r') as f:
         creds_json = json.load(f)
 
+    from google.oauth2.service_account import Credentials
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
+    creds = Credentials.from_service_account_info(creds_json, scopes=scope)
     client = gspread.authorize(creds)
     
     # Movie sheet
@@ -92,6 +93,7 @@ try:
 except Exception as e:
     logger.error(f"Error initializing Google Sheets: {e}")
     raise
+
 
 # Initialize Telegram application
 application_tg = Application.builder().token(TOKEN).build()
