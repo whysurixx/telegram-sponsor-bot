@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Configuration from environment variables
 TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-PORT = int(os.environ.get("PORT", 10000))
+PORT = int(os.environ.get("PORT", 10000))  # Use Render's PORT environment variable
 GOOGLE_CREDENTIALS_PATH = "/etc/secrets/GOOGLE_CREDENTIALS"
 
 # Load channels and buttons from environment variables
@@ -288,10 +288,15 @@ async def webhook_endpoint(request):
         logger.error(f"Error processing webhook update: {e}")
         return PlainTextResponse("Error", status_code=500)
 
+# Define a health check endpoint
+async def health_check(request):
+    return PlainTextResponse("OK", status_code=200)
+
 # Define the ASGI application
 app = Starlette(
     routes=[
-        Route(f"/{TOKEN}", endpoint=webhook_endpoint, methods=["POST"])
+        Route(f"/{TOKEN}", endpoint=webhook_endpoint, methods=["POST"]),
+        Route("/", endpoint=health_check, methods=["GET", "HEAD"])  # Health check endpoint
     ]
 )
 
