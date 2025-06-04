@@ -77,7 +77,7 @@ except Exception as e:
 application_tg = Application.builder().token(TOKEN).build()
 
 # List of random emojis for positive responses
-POSITIVE_EMOJIS = ['😍', '🎉', '😎', '👍', '🔥', '😊', '😁']
+POSITIVE_EMOJIS = ['😍', '🎉', '😎', '👍', '🔥', '😊', '😁', '⭐']
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /start command."""
