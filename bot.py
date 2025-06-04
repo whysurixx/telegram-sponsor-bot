@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Configuration from environment variables
 TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-PORT = int(os.environ.get("PORT", 443))
+PORT = int(os.environ.get("PORT", 10000))  # Render обычно использует 10000, но $PORT переопределит
 GOOGLE_CREDENTIALS_PATH = "/etc/secrets/GOOGLE_CREDENTIALS"
 
 # Load channels and buttons from environment variables
