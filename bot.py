@@ -93,9 +93,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.message.from_user
     logger.info(f"User {user.id} {user.first_name} started the bot.")
     welcome_text = (
-        "Привет, *киноман*! 🎥✨\n"
-        "Я твой личный гид в мир кино! 🍿\n"
-        "Выбери действие ниже, и давай начнём приключение! 😎"
+        "Привет, *киноман*! 🎬\n"
+        "Добро пожаловать в твой личный кино-гид! 🍿 Я помогу найти фильмы по секретным кодам и открою мир кино! 🚀\n"
+        "Выбери действие в меню ниже, и начнём приключение! 😎"
     )
     await send_message_with_retry(update.message, welcome_text, reply_markup=get_main_keyboard())
 
@@ -136,9 +136,9 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
 async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: Optional[int] = None) -> None:
     """Prompt user to subscribe to channels."""
     promo_text = (
-        "Эй, *кинофан*! 🎬\n"
-        "Чтобы продолжить, подпишись на наших крутых спонсоров! 🚀\n"
-        "Жми на кнопки ниже и затем на *Я ПОДПИСАЛСЯ!* 😎"
+        "Эй, *кинофан*! 🎥\n"
+        "Чтобы открыть доступ к фильмам, подпишись на наших крутых спонсоров! 🌟\n"
+        "Кликни на кнопки ниже, подпишись и нажми *Я ПОДПИСАЛСЯ!* 😎"
     )
     keyboard = [[InlineKeyboardButton(btn["text"], url=btn["url"])] for btn in CHANNEL_BUTTONS]
     keyboard.append([InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")])
@@ -170,17 +170,17 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data['subscription_confirmed'] = True
         logger.info(f"User {user_id} successfully confirmed subscription.")
         success_text = (
-            "Ура, *ты молодец*! 🎉\n"
-            "Теперь ты подписан на все каналы! 😍\n"
-            f"{'Введи *числовой код* для поиска фильма! 🍿' if context.user_data.get('awaiting_code', False) else 'Выбери действие ниже! 😎'}"
+            "Супер, *ты в деле*! 🎉\n"
+            "Все каналы на месте, теперь ты настоящий киноман! 😍\n"
+            f"{'Введи *числовой код* для поиска фильма! 🍿' if context.user_data.get('awaiting_code', False) else 'Выбери действие в меню ниже! 😎'}"
         )
         reply_markup = get_main_keyboard() if not context.user_data.get('awaiting_code', False) else None
         await edit_message_with_retry(context, query.message.chat_id, query.message.message_id, success_text, reply_markup)
     else:
         logger.info(f"User {user_id} is not subscribed to some channels.")
         promo_text = (
-            "Ой-ой! 😕 Кажется, ты ещё не подписан на *все каналы*! \n"
-            "Подпишись на них и снова нажми *Я ПОДПИСАЛСЯ!* 🚀"
+            "Ой-ой! 😕 Похоже, ты пропустил пару каналов! 🚨\n"
+            "Подпишись на все каналы ниже и снова нажми *Я ПОДПИСАЛСЯ!* 🌟"
         )
         keyboard = [[InlineKeyboardButton(btn["text"], url=btn["url"])] for btn in unsubscribed_channels]
         keyboard.append([InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")])
@@ -219,12 +219,12 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if not context.user_data.get('awaiting_code', False):
         logger.info(f"User {user_id} sent code without activating search mode.")
-        await send_message_with_retry(update.message, "Эй, *киноман*! 😅 Нажми *🔍 Поиск фильма* и затем введи код! 🍿", reply_markup=get_main_keyboard())
+        await send_message_with_retry(update.message, "Эй, *киноман*! 😅 Сначала нажми *🔍 Поиск фильма*, а потом введи код! 🍿", reply_markup=get_main_keyboard())
         return
 
     if not code.isdigit():
         logger.info(f"User {user_id} entered non-numeric code: {code}")
-        await send_message_with_retry(update.message, "Эй, мне нужен *числовой код*! 😅 Введи только цифры, пожалуйста! 🔢")
+        await send_message_with_retry(update.message, "Ой, нужен *только числовой код*! 😊 Введи цифры, и мы найдём твой фильм! 🔢")
         return
 
     if not context.user_data.get('subscription_confirmed', False):
@@ -236,8 +236,9 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     movie = find_movie_by_code(code)
     context.user_data['awaiting_code'] = False
     result_text = (
-        f"*Вот твой фильм!* 🎥 Код {code}: *{movie['title']}* {random.choice(POSITIVE_EMOJIS)}" if movie
-        else f"Ой, фильм с кодом *{code}* не найден! 😢 Попробуем ещё раз? 🔍"
+        f"*Бинго!* 🎥 Код {code}: *{movie['title']}* {random.choice(POSITIVE_EMOJIS)}\n"
+        "Хочешь найти ещё один шедевр? Нажми *🔍 Поиск фильма*! 🍿" if movie
+        else f"Упс, фильм с кодом *{code}* не найден! 😢 Проверь код или попробуй другой! 🔍"
     )
     await send_message_with_retry(update.message, result_text, reply_markup=get_main_keyboard())
 
@@ -252,29 +253,51 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await prompt_subscribe(update, context)
             return
         context.user_data['awaiting_code'] = True
-        await send_message_with_retry(update.message, "Круто! 😎 Введи *числовой код* фильма! 🍿")
+        await send_message_with_retry(update.message, "Отлично! 😎 Введи *числовой код* фильма, и я найду его для тебя! 🍿")
     elif text == "👥 Реферальная система":
         if not context.user_data.get('subscription_confirmed', False):
             logger.info(f"User {user_id} pressed Referral without subscription.")
             await prompt_subscribe(update, context)
             return
-        await send_message_with_retry(update.message, "Реферальная система пока в разработке! 😅 Скоро будет что-то крутое! 🚀", reply_markup=get_main_keyboard())
+        await send_message_with_retry(update.message, 
+            "🔥 *Реферальная система* в разработке! 😅\n"
+            "Скоро ты сможешь приглашать друзей и зарабатывать дополнительные поиски! 🚀\n"
+            "Пока выбери другое действие в меню! 👇", 
+            reply_markup=get_main_keyboard())
     elif text == "❓ Как работает бот":
         if not context.user_data.get('subscription_confirmed', False):
             logger.info(f"User {user_id} pressed How-to without subscription.")
             await prompt_subscribe(update, context)
             return
-        await send_message_with_retry(update.message, "Я помогу найти фильм по коду! 🎥 Просто нажми *🔍 Поиск фильма*, подпишись на каналы и введи код! 😊", reply_markup=get_main_keyboard())
+        how_it_works_text = (
+            "🎬 *Как работает наш кино-бот?* 🎥\n\n"
+            "Я — твой личный помощник в мире кино! 🍿 Моя главная задача — помочь тебе найти фильмы по секретным числовым кодам. Вот как это работает:\n\n"
+            "🔍 *Поиск фильмов*:\n"
+            "1. Нажми на кнопку *🔍 Поиск фильма* в меню.\n"
+            "2. Подпишись на наши крутые спонсорские каналы (это обязательно! 😎).\n"
+            "3. Введи *числовой код* фильма (только цифры!).\n"
+            "4. Я найду фильм в нашей базе и покажу его название! 🎉\n\n"
+            "👥 *Реферальная система*:\n"
+            "- У тебя есть *5 бесплатных поисков* при старте! 🚀\n"
+            "- Приглашай друзей в бота, и за каждого нового пользователя ты получишь *+2 поиска*! 🌟\n"
+            "- Чем больше друзей, тем больше фильмов ты можешь найти! 😍\n\n"
+            "❗ *Важно*:\n"
+            "- Подписка на каналы обязательна для доступа к поиску.\n"
+            "- Вводи только числовые коды после нажатия *🔍 Поиск фильма*.\n"
+            "- Если что-то пошло не так, просто следуй подсказкам, и я помогу! 😊\n\n"
+            "Готов к кино-приключению? Выбери действие в меню! 👇"
+        )
+        await send_message_with_retry(update.message, how_it_works_text, reply_markup=get_main_keyboard())
     else:
         logger.info(f"User {user_id} sent unknown command: {text}")
-        await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Выбери действие из меню ниже! 👇", reply_markup=get_main_keyboard())
+        await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню ниже! 👇", reply_markup=get_main_keyboard())
 
 async def handle_non_button_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle non-button text input."""
     if update.message.from_user.id == context.bot.id:
         return
     logger.info(f"User {update.message.from_user.id} sent non-button text: {update.message.text}")
-    await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Выбери действие из меню ниже! 👇", reply_markup=get_main_keyboard())
+    await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню ниже! 👇", reply_markup=get_main_keyboard())
 
 # Define the webhook endpoint
 async def webhook_endpoint(request):
