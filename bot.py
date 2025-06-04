@@ -2,6 +2,7 @@ import os
 import logging
 import json
 import time
+import random
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.responses import PlainTextResponse
@@ -74,6 +75,9 @@ except Exception as e:
 
 # Initialize Telegram application
 application_tg = Application.builder().token(TOKEN).build()
+
+# List of random emojis for positive responses
+POSITIVE_EMOJIS = ['😍', '🎉', '😎', '👍', '🔥', '😊', '😁']
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /start command."""
@@ -167,7 +171,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             code = context.user_data.pop('pending_movie_code')
             movie = find_movie_by_code(code)
             result_text = (
-                f"*Вот твой фильм!* 🎥 Код {code}: *{movie['title']}* 😍" if movie
+                f"*Вот твой фильм!* 🎥 Код {code}: *{movie['title']}* {random.choice(POSITIVE_EMOJIS)}" if movie
                 else f"Ой, фильм с кодом *{code}* не найден! 😢 Давай попробуем другой? 🔢"
             )
             await send_message_with_retry(query.message, result_text)
@@ -226,7 +230,7 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     logger.info(f"User {user_id} confirmed subscription. Processing code: {code}")
     movie = find_movie_by_code(code)
     result_text = (
-        f"*Вот твой фильм!* 🎥 Код {code}: *{movie['title']}* 😍" if movie
+        f"*Вот твой фильм!* 🎥 Код {code}: *{movie['title']}* {random.choice(POSITIVE_EMOJIS)}" if movie
         else f"Ой, фильм с кодом *{code}* не найден! 😢 Давай попробуем другой? 🔢"
     )
     await send_message_with_retry(update.message, result_text)
