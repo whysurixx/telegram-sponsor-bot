@@ -9,8 +9,8 @@ from starlette.responses import PlainTextResponse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from telegram.error import RetryAfter
+from google.oauth2.service_account import Credentials
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 from typing import Optional, Dict, List
 
 # Configure logging
@@ -57,7 +57,6 @@ if not BOT_USERNAME:
     logger.error("BOT_USERNAME is not set in environment variables!")
     raise ValueError("BOT_USERNAME is not set in environment variables!")
 
-# Initialize Google Sheets
 movie_sheet = None
 user_sheet = None
 try:
@@ -65,15 +64,12 @@ try:
         logger.error(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
         raise FileNotFoundError(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
 
-    with open(GOOGLE_CREDENTIALS_PATH, 'r') as f:
-        creds_json = json.load(f)
-
-    from google.oauth2.service_account import Credentials
+    # Load credentials from the JSON file
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    creds = Credentials.from_service_account_info(creds_json, scopes=scope)
+    creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_PATH, scopes=scope)
     client = gspread.authorize(creds)
     
     # Movie sheet
@@ -93,7 +89,6 @@ try:
 except Exception as e:
     logger.error(f"Error initializing Google Sheets: {e}")
     raise
-
 
 # Initialize Telegram application
 application_tg = Application.builder().token(TOKEN).build()
