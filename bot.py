@@ -116,7 +116,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     first_name = user.first_name or ""
     logger.info(f"User {user_id} {first_name} started the bot.")
 
-    # Check for referral
+    # Check for referral and store referrer_id
     referrer_id = None
     if update.message.text.startswith("/start invite_"):
         try:
@@ -127,29 +127,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except (IndexError, ValueError):
             logger.warning(f"Invalid referral link for user {user_id}: {update.message.text}")
             referrer_id = None
+    if referrer_id:
+        context.user_data['referrer_id'] = referrer_id
+        logger.info(f"Stored referrer_id {referrer_id} for user {user_id}.")
 
     # Register or update user in Users sheet
     user_data = get_user_data(user_id)
     if not user_data:
-        # New user: initialize with 5 search queries
-        add_user(user_id, username, first_name, search_queries=5, invited_users=0)
-        logger.info(f"Registered new user {user_id} with 5 search queries.")
+        try:
+            add_user(user_id, username, first_name, search_queries=5, invited_users=0)
+            logger.info(f"Added user {user_id} to Users sheet with 5 search queries.")
+        except Exception as e:
+            logger.error(f"Failed to add user {user_id} to Users sheet: {e}")
     else:
-        # Update username and first_name if changed
         update_user(user_id, username=username, first_name=first_name)
         logger.info(f"Updated existing user {user_id}.")
-
-    # Process referral if valid
-    if referrer_id and user_data is None:  # Only for new users
-        referrer_data = get_user_data(referrer_id)
-        if referrer_data:
-            # Increment referrer's invited_users and add 2 search queries
-            update_user(
-                referrer_id,
-                invited_users=int(referrer_data.get("invited_users", 0)) + 1,
-                search_queries=int(referrer_data.get("search_queries", 0)) + 2
-            )
-            logger.info(f"User {user_id} invited by {referrer_id}. Updated referrer's data.")
 
     welcome_text = (
         "Привет, *киноман*! 🎬\n"
@@ -210,7 +202,7 @@ async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, m
         await send_message_with_retry(update.message, promo_text, reply_markup)
 
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Check if the user is subscribed to all required channels."""
+    """Check if the user is subscribed to all required channels and process referrals."""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -229,6 +221,20 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not unsubscribed_channels:
         context.user_data['subscription_confirmed'] = True
         logger.info(f"User {user_id} successfully confirmed subscription.")
+
+        # Process referral reward if referrer exists
+        referrer_id = context.user_data.get('referrer_id')
+        if referrer_id:
+            referrer_data = get_user_data(referrer_id)
+            if referrer_data:
+                update_user(
+                    referrer_id,
+                    invited_users=int(referrer_data.get("invited_users", 0)) + 1,
+                    search_queries=int(referrer_data.get("search_queries", 0)) + 2
+                )
+                logger.info(f"Referral reward processed for referrer {referrer_id} by user {user_id}.")
+                del context.user_data['referrer_id']  # Clear referrer_id after processing
+
         success_text = (
             "Супер, *ты в деле*! 🎉\n"
             "Вы подписаны на все каналы! 😍 Теперь ты можешь продолжить работать с ботом!\n"
@@ -295,7 +301,7 @@ def add_user(user_id: int, username: str, first_name: str, search_queries: int, 
             str(search_queries),
             str(invited_users)
         ])
-        logger.info(f"Added user {user_id} to Users sheet.")
+        logger.info(f"Added user {user_id} to Users sheet with 5 search queries.")
     except gspread.exceptions.APIError as e:
         logger.error(f"Google Sheets API error in add_user: {e}")
     except Exception as e:
@@ -437,7 +443,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         search_queries = user_data.get("search_queries", "0")
         referral_text = (
             "🔥 *Реферальная система* 🔥\n\n"
-            "Приглашай друзей и получай *+2 поиска* за каждого, кто начнёт использовать бота по твоей ссылке! 🚀\n"
+            "Приглашай друзей и получай *+2 поиска* за каждого, кто подпишется на каналы и начнёт использовать бота по твоей ссылке! 🚀\n"
             f"Твоя реферальная ссылка: `{referral_link}`\n"
             "Скопируй её и отправь друзьям! 😎\n\n"
             f"👥 *Количество добавленных пользователей*: *{invited_users}*\n"
@@ -459,7 +465,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "4. Я найду фильм в нашей базе и покажу его название! 🎉\n\n"
             "👥 *Реферальная система*:\n"
             "- У тебя есть *5 бесплатных поисков* при старте! 🚀\n"
-            "- Приглашай друзей в бота, и за каждого нового пользователя ты получишь *+2 поиска*! 🌟\n"
+            "- Приглашай друзей в бота, и за каждого, кто подпишется на каналы, ты получишь *+2 поиска*! 🌟\n"
             "- Если поиски закончились, приглашай друзей, чтобы продолжить! 😍\n\n"
             "❗ *Важно*:\n"
             "- Подписка на каналы обязательна для доступа к поиску.\n"
