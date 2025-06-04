@@ -80,8 +80,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.message.from_user
     logger.info(f"User {user.id} {user.first_name} started the bot.")
     welcome_text = (
-        "Привет! 👋\n"
-        "Напиши код фильма, и я помогу тебе узнать его название. 🎬\n\n"
+        "Привет, *киноман*! 🎥✨\n"
+        "Я помогу найти фильм по коду! Просто напиши *числовой код*, и мы отправимся в мир кино! 🍿\n"
+        "Давай начнём? 😊"
     )
     await send_message_with_retry(update.message, welcome_text)
 
@@ -122,10 +123,10 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
 async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: Optional[int] = None) -> None:
     """Prompt user to subscribe to channels."""
     promo_text = (
-        "Чтобы продолжить поиск фильма, сначала подпишись на наших спонсоров!\n"
-        "Когда сделаешь всё, нажми кнопку и мы продолжим! 🚀"
+        "Эй, *кинофан*! 🎬\n"
+        "Чтобы найти фильм, сначала подпишись на наших крутых спонсоров! 🚀\n"
+        "Скорее жми на кнопки ниже, а потом на *Я ПОДПИСАЛСЯ!* 😎"
     )
-    # Ensure buttons are vertical (one per row)
     keyboard = [[InlineKeyboardButton(btn["text"], url=btn["url"])] for btn in CHANNEL_BUTTONS]
     keyboard.append([InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")])
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -143,7 +144,6 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
     bot = context.bot
     unsubscribed_channels = []
 
-    # Check subscription status for each channel
     for channel_id, button in zip(CHANNELS, CHANNEL_BUTTONS):
         try:
             member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
@@ -157,27 +157,26 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data['subscription_confirmed'] = True
         logger.info(f"User {user_id} successfully confirmed subscription.")
         success_text = (
-            "🎉 Поздравляю! Ты подписался на все каналы.\n"
-            "Теперь можешь отправить код фильма, и я найду его название! 🍿"
+            "Ура, *ты молодец*! 🎉\n"
+            "Теперь ты подписан на все каналы! 😍\n"
+            "Давай искать фильм — напиши мне *код*! 🍿"
         )
         await edit_message_with_retry(context, query.message.chat_id, query.message.message_id, success_text)
 
-        # Process pending movie code if exists
         if 'pending_movie_code' in context.user_data:
             code = context.user_data.pop('pending_movie_code')
             movie = find_movie_by_code(code)
             result_text = (
-                f"🎥 Фильм по коду {code}: {movie['title']}" if movie
-                else f"К сожалению, фильм с кодом `{code}` не найден! Попробуй другой код."
+                f"*Вот твой фильм!* 🎥 Код {code}: *{movie['title']}* 😍" if movie
+                else f"Ой, фильм с кодом *{code}* не найден! 😢 Давай попробуем другой? 🔢"
             )
             await send_message_with_retry(query.message, result_text)
     else:
         logger.info(f"User {user_id} is not subscribed to some channels.")
         promo_text = (
-            "😕 Похоже, ты не подписан на некоторые каналы.\n"
-            "Пожалуйста, подпишись на них и нажми '✅ Я ПОДПИСАЛСЯ!'."
+            "Ой-ой! 😕 Кажется, ты ещё не подписан на *все каналы*! \n"
+            "Подпишись на них и снова нажми *Я ПОДПИСАЛСЯ!* 🚀"
         )
-        # Show only unsubscribed channels, one per row
         keyboard = [[InlineKeyboardButton(btn["text"], url=btn["url"])] for btn in unsubscribed_channels]
         keyboard.append([InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")])
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -215,7 +214,7 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if not code.isdigit():
         logger.info(f"User {user_id} entered non-numeric code: {code}")
-        await send_message_with_retry(update.message, "Пожалуйста, введи только числовой код фильма. 🔢")
+        await send_message_with_retry(update.message, "Эй, мне нужен *числовой код*! 😅 Введи только цифры, пожалуйста! 🔢")
         return
 
     if not context.user_data.get('subscription_confirmed', False):
@@ -227,8 +226,8 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     logger.info(f"User {user_id} confirmed subscription. Processing code: {code}")
     movie = find_movie_by_code(code)
     result_text = (
-        f"🎥 Фильм по коду {code}: {movie['title']}" if movie
-        else f"К сожалению, фильм с кодом `{code}` не найден! Попробуй другой код."
+        f"*Вот твой фильм!* 🎥 Код {code}: *{movie['title']}* 😍" if movie
+        else f"Ой, фильм с кодом *{code}* не найден! 😢 Давай попробуем другой? 🔢"
     )
     await send_message_with_retry(update.message, result_text)
 
@@ -236,7 +235,7 @@ async def handle_non_numeric_text(update: Update, context: ContextTypes.DEFAULT_
     """Handle non-numeric text input."""
     if update.message.from_user.id == context.bot.id:
         return  # Ignore messages sent by the bot itself
-    await send_message_with_retry(update.message, "Пожалуйста, введи *только числовой* код фильма. 🔢")
+    await send_message_with_retry(update.message, "Ой, я жду *только числовой код*! 😊 Попробуй снова, только цифры! 🔢")
 
 # Define the webhook endpoint
 async def webhook_endpoint(request):
@@ -280,7 +279,6 @@ async def startup():
     # Start the application
     await application_tg.start()
     logger.info("Application started successfully.")
-
 
 # Add startup event handler
 app.add_event_handler("startup", startup)
