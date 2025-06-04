@@ -257,7 +257,6 @@ app = Starlette(
     ]
 )
 
-# Set up the webhook and handlers on startup
 async def startup():
     # Add handlers to the application
     application_tg.add_handler(CommandHandler("start", start))
@@ -272,7 +271,7 @@ async def startup():
     full_webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
     logger.info(f"Setting webhook to: {full_webhook_url}")
     try:
-        await application_tg.bot.set_webhook(webhook_url=full_webhook_url)
+        await application_tg.bot.set_webhook(url=full_webhook_url)
         logger.info("Webhook set successfully.")
     except Exception as e:
         logger.error(f"Failed to set webhook: {e}")
@@ -281,6 +280,7 @@ async def startup():
     # Start the application
     await application_tg.start()
     logger.info("Application started successfully.")
+
 
 # Add startup event handler
 app.add_event_handler("startup", startup)
