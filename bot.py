@@ -62,11 +62,11 @@ CHANNELS = [
 ]
 
 CHANNEL_BUTTONS = [
-    {"text": "Канал 1 — Смотри новинки", "url": "https://t.me/+8qO35jVzZVs5MjMy"},
-    {"text": "Канал 2 — Лучше фильмы", "url": "https://t.me/+ZAvb9OTIrU9mOWIy"},
-    {"text": "Канал 3 — Премии и хиты", "url": "https://t.me/+PAu2GRMZuUU0ZWQy"},
-    {"text": "Канал 4 — Кино без рекламы", "url": "https://t.me/+kO2CPJZgxediMmZi"},
-    {"text": "Канал 5 — Эксклюзивы", "url": "https://t.me/+DUDDSAYIDl8yN2Ni"},
+    {"text": "1 — Смотри новинки", "url": "https://t.me/+8qO35jVzZVs5MjMy"},
+    {"text": "2 — Лучше фильмы", "url": "https://t.me/+ZAvb9OTIrU9mOWIy"},
+    {"text": "3 — Премии и хиты", "url": "https://t.me/+PAu2GRMZuUU0ZWQy"},
+    {"text": "4 — Кино без рекламы", "url": "https://t.me/+kO2CPJZgxediMmZi"},
+    {"text": "5 — Эксклюзивы", "url": "https://t.me/+DUDDSAYIDl8yN2Ni"},
 ]
 
 @app.route('/')
@@ -190,7 +190,7 @@ def handle_movie_code(update: Update, context: CallbackContext) -> None:
     logger.info(f"Пользователь {user_id} подтвердил подписку. Обрабатываем код: {code}")
     movie = find_movie_by_code(code)
     if movie:
-        update.message.reply_text(f"🎥 Фильм по коду \"{code}\": \"{movie['title']}\"", parse_mode='Markdown')
+        update.message.reply_text(f"🎥 Фильм по коду \{code}\: \{movie['title']}\", parse_mode='Markdown')
     else:
         update.message.reply_text(f"К сожалению, фильм с кодом `{code}` не найден! Попробуй другой код.", parse_mode='Markdown')
 
