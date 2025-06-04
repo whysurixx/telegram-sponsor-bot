@@ -2,6 +2,7 @@ import os
 import logging
 import json
 import time
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telegram.error import RetryAfter
@@ -258,5 +259,8 @@ async def main() -> None:
         raise
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(main())
+    finally:
+        loop.close()
