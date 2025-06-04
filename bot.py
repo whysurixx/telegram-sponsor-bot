@@ -215,7 +215,7 @@ def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
         logger.info(f"Movie with code {code} not found.")
         return None
     except gspread.exceptions.APIError as e:
-        logger.error(f_asset/artifact_cb0657cc-d230-4ff7-a5a5-2359da2d5e99_8b9b6b7b-1c2e-4a9f-9c7e-7f8b8c8d9e0a_telegram_bot.py:Google Sheets API error: {e}")
+        logger.error(f"Google Sheets API error: {e}")
         return None
     except Exception as e:
         logger.error(f"Unknown error accessing Google Sheets: {e}")
