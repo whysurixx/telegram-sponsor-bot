@@ -25,6 +25,9 @@ TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))  # Use Render's PORT environment variable
 GOOGLE_CREDENTIALS_PATH = "/etc/secrets/GOOGLE_CREDENTIALS"
+BOT_USERNAME = os.environ.get("BOT_USERNAME")  # e.g., @YourBotName
+MOVIE_SHEET_ID = "1hmm-rfUlDcA31QD04XRXIyaa_EpN8ObuHFc8cp7Rwms"
+USER_SHEET_ID = "1XYFfqmC5boLBB8HjjkyKA6AyN3WNCKy6U8LEmN8KvrA"
 
 # Load channels and buttons from environment variables
 try:
@@ -50,9 +53,13 @@ if not WEBHOOK_URL:
 if not TOKEN:
     logger.error("BOT_TOKEN is not set in environment variables!")
     raise ValueError("BOT_TOKEN is not set in environment variables!")
+if not BOT_USERNAME:
+    logger.error("BOT_USERNAME is not set in environment variables!")
+    raise ValueError("BOT_USERNAME is not set in environment variables!")
 
 # Initialize Google Sheets
-sheet = None
+movie_sheet = None
+user_sheet = None
 try:
     if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
         logger.error(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
@@ -67,8 +74,21 @@ try:
     ]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
     client = gspread.authorize(creds)
-    sheet = client.open_by_key("1hmm-rfUlDcA31QD04XRXIyaa_EpN8ObuHFc8cp7Rwms").sheet1
-    logger.info("Google Sheets initialized successfully.")
+    
+    # Movie sheet
+    movie_spreadsheet = client.open_by_key(MOVIE_SHEET_ID)
+    movie_sheet = movie_spreadsheet.sheet1  # Movie data sheet
+    logger.info(f"Movie sheet initialized successfully (ID: {MOVIE_SHEET_ID}).")
+    
+    # User sheet
+    user_spreadsheet = client.open_by_key(USER_SHEET_ID)
+    try:
+        user_sheet = user_spreadsheet.worksheet("Users")  # User data sheet
+    except gspread.exceptions.WorksheetNotFound:
+        user_sheet = user_spreadsheet.add_worksheet(title="Users", rows=1000, cols=5)
+        user_sheet.append_row(["user_id", "username", "first_name", "search_queries", "invited_users"])
+        logger.info(f"Created new 'Users' worksheet in user spreadsheet (ID: {USER_SHEET_ID}).")
+    logger.info(f"User sheet initialized successfully (ID: {USER_SHEET_ID}).")
 except Exception as e:
     logger.error(f"Error initializing Google Sheets: {e}")
     raise
@@ -89,12 +109,52 @@ def get_main_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the /start command."""
+    """Handle the /start command, including referral links."""
     user = update.message.from_user
-    logger.info(f"User {user.id} {user.first_name} started the bot.")
+    user_id = user.id
+    username = user.username or ""
+    first_name = user.first_name or ""
+    logger.info(f"User {user_id} {first_name} started the bot.")
+
+    # Check for referral
+    referrer_id = None
+    if update.message.text.startswith("/start invite_"):
+        try:
+            referrer_id = int(update.message.text.split("invite_")[1])
+            if referrer_id == user_id:
+                logger.info(f"User {user_id} tried to invite themselves.")
+                referrer_id = None
+        except (IndexError, ValueError):
+            logger.warning(f"Invalid referral link for user {user_id}: {update.message.text}")
+            referrer_id = None
+
+    # Register or update user in Users sheet
+    user_data = get_user_data(user_id)
+    if not user_data:
+        # New user: initialize with 5 search queries
+        add_user(user_id, username, first_name, search_queries=5, invited_users=0)
+        logger.info(f"Registered new user {user_id} with 5 search queries.")
+    else:
+        # Update username and first_name if changed
+        update_user(user_id, username=username, first_name=first_name)
+        logger.info(f"Updated existing user {user_id}.")
+
+    # Process referral if valid
+    if referrer_id and user_data is None:  # Only for new users
+        referrer_data = get_user_data(referrer_id)
+        if referrer_data:
+            # Increment referrer's invited_users and add 2 search queries
+            update_user(
+                referrer_id,
+                invited_users=int(referrer_data.get("invited_users", 0)) + 1,
+                search_queries=int(referrer_data.get("search_queries", 0)) + 2
+            )
+            logger.info(f"User {user_id} invited by {referrer_id}. Updated referrer's data.")
+
     welcome_text = (
         "Привет, *киноман*! 🎬\n"
         "Добро пожаловать в твой личный кино-гид! 🍿 Я помогу найти фильмы по секретным кодам и открою мир кино! 🚀\n"
+        f"{'Ты был приглашён другом! 😎 ' if referrer_id else ''}"
         "Выбери действие в меню ниже, и начнём приключение! 😎"
     )
     await send_message_with_retry(update.message, welcome_text, reply_markup=get_main_keyboard())
@@ -196,14 +256,91 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup = InlineKeyboardMarkup(keyboard)
         await edit_message_with_retry(context, query.message.chat_id, query.message.message_id, promo_text, reply_markup)
 
+def get_user_data(user_id: int) -> Optional[Dict[str, str]]:
+    """Retrieve user data from Users sheet."""
+    if user_sheet is None:
+        logger.error("Users sheet not initialized.")
+        return None
+    try:
+        all_values = user_sheet.get_all_values()[1:]  # Skip header
+        for row in all_values:
+            if not row or len(row) < 1:
+                continue
+            if row[0] == str(user_id):
+                return {
+                    "user_id": row[0],
+                    "username": row[1] if len(row) > 1 else "",
+                    "first_name": row[2] if len(row) > 2 else "",
+                    "search_queries": row[3] if len(row) > 3 else "0",
+                    "invited_users": row[4] if len(row) > 4 else "0"
+                }
+        return None
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error in get_user_data: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unknown error in get_user_data: {e}")
+        return None
+
+def add_user(user_id: int, username: str, first_name: str, search_queries: int, invited_users: int) -> None:
+    """Add a new user to Users sheet."""
+    if user_sheet is None:
+        logger.error("Users sheet not initialized.")
+        return
+    try:
+        user_sheet.append_row([
+            str(user_id),
+            username,
+            first_name,
+            str(search_queries),
+            str(invited_users)
+        ])
+        logger.info(f"Added user {user_id} to Users sheet.")
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error in add_user: {e}")
+    except Exception as e:
+        logger.error(f"Unknown error in add_user: {e}")
+
+def update_user(user_id: int, **kwargs) -> None:
+    """Update user data in Users sheet."""
+    if user_sheet is None:
+        logger.error("Users sheet not initialized.")
+        return
+    try:
+        all_values = user_sheet.get_all_values()
+        for idx, row in enumerate(all_values[1:], start=2):  # Skip header
+            if not row or len(row) < 1 or row[0] != str(user_id):
+                continue
+            updates = {
+                "username": row[1] if len(row) > 1 else "",
+                "first_name": row[2] if len(row) > 2 else "",
+                "search_queries": row[3] if len(row) > 3 else "0",
+                "invited_users": row[4] if len(row) > 4 else "0"
+            }
+            updates.update(kwargs)
+            user_sheet.update(f"A{idx}:E{idx}", [[
+                str(user_id),
+                updates["username"],
+                updates["first_name"],
+                str(updates["search_queries"]),
+                str(updates["invited_users"])
+            ]])
+            logger.info(f"Updated user {user_id} in Users sheet.")
+            return
+        logger.warning(f"User {user_id} not found for update.")
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error in update_user: {e}")
+    except Exception as e:
+        logger.error(f"Unknown error in update_user: {e}")
+
 def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
     """Find a movie by its code in Google Sheets."""
-    if sheet is None:
-        logger.error("Google Sheets not initialized. Cannot perform search.")
+    if movie_sheet is None:
+        logger.error("Movie sheet not initialized. Cannot perform search.")
         return None
 
     try:
-        all_values = sheet.get_all_values()
+        all_values = movie_sheet.get_all_values()
         for row_data in all_values:
             if not row_data or len(row_data) < 2:
                 continue
@@ -241,14 +378,36 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await prompt_subscribe(update, context)
         return
 
+    # Check search queries
+    user_data = get_user_data(user_id)
+    if not user_data:
+        logger.error(f"User {user_id} not found in Users sheet.")
+        await send_message_with_retry(update.message, "Упс, что-то пошло не так! 😢 Попробуй снова или напиши в поддержку.", reply_markup=get_main_keyboard())
+        return
+    search_queries = int(user_data.get("search_queries", 0))
+    if search_queries <= 0:
+        logger.info(f"User {user_id} has no remaining search queries.")
+        await send_message_with_retry(
+            update.message,
+            "Ой, у тебя закончились поиски! 😕 Приглашай друзей через *👥 Реферальная система* и получай +2 поиска за каждого! 🚀",
+            reply_markup=get_main_keyboard()
+        )
+        context.user_data['awaiting_code'] = False
+        return
+
     logger.info(f"User {user_id} confirmed subscription. Processing code: {code}")
     movie = find_movie_by_code(code)
     context.user_data['awaiting_code'] = False
-    result_text = (
-        f"*Бинго!* 🎥 Код {code}: *{movie['title']}* {random.choice(POSITIVE_EMOJIS)}\n"
-        "Хочешь найти ещё один шедевр? Нажми *🔍 Поиск фильма*! 🍿" if movie
-        else f"Упс, фильм с кодом *{code}* не найден! 😢 Проверь код или попробуй другой! 🔍"
-    )
+    if movie:
+        # Decrement search queries
+        update_user(user_id, search_queries=search_queries - 1)
+        result_text = (
+            f"*Бинго!* 🎥 Код {code}: *{movie['title']}* {random.choice(POSITIVE_EMOJIS)}\n"
+            f"Осталось поисков: *{search_queries - 1}* 🔍\n"
+            "Хочешь найти ещё один шедевр? Нажми *🔍 Поиск фильма*! 🍿"
+        )
+    else:
+        result_text = f"Упс, фильм с кодом *{code}* не найден! 😢 Проверь код или попробуй другой! 🔍"
     await send_message_with_retry(update.message, result_text, reply_markup=get_main_keyboard())
 
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -268,11 +427,23 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.info(f"User {user_id} pressed Referral without subscription.")
             await prompt_subscribe(update, context)
             return
-        await send_message_with_retry(update.message, 
-            "🔥 *Реферальная система* в разработке! 😅\n"
-            "Скоро ты сможешь приглашать друзей и зарабатывать дополнительные поиски! 🚀\n"
-            "Пока выбери другое действие в меню! 👇", 
-            reply_markup=get_main_keyboard())
+        user_data = get_user_data(user_id)
+        if not user_data:
+            logger.error(f"User {user_id} not found in Users sheet.")
+            await send_message_with_retry(update.message, "Упс, что-то пошло не так! 😢 Попробуй снова или напиши в поддержку.", reply_markup=get_main_keyboard())
+            return
+        referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
+        invited_users = user_data.get("invited_users", "0")
+        search_queries = user_data.get("search_queries", "0")
+        referral_text = (
+            "🔥 *Реферальная система* 🔥\n\n"
+            "Приглашай друзей и получай *+2 поиска* за каждого, кто начнёт использовать бота по твоей ссылке! 🚀\n"
+            f"Твоя реферальная ссылка: `{referral_link}`\n"
+            "Скопируй её и отправь друзьям! 😎\n\n"
+            f"👥 *Количество добавленных пользователей*: *{invited_users}*\n"
+            f"🔍 *Количество оставшихся запросов*: *{search_queries}*"
+        )
+        await send_message_with_retry(update.message, referral_text, reply_markup=get_main_keyboard())
     elif text == "❓ Как работает бот":
         if not context.user_data.get('subscription_confirmed', False):
             logger.info(f"User {user_id} pressed How-to without subscription.")
@@ -289,7 +460,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "👥 *Реферальная система*:\n"
             "- У тебя есть *5 бесплатных поисков* при старте! 🚀\n"
             "- Приглашай друзей в бота, и за каждого нового пользователя ты получишь *+2 поиска*! 🌟\n"
-            "- Чем больше друзей, тем больше фильмов ты можешь найти! 😍\n\n"
+            "- Если поиски закончились, приглашай друзей, чтобы продолжить! 😍\n\n"
             "❗ *Важно*:\n"
             "- Подписка на каналы обязательна для доступа к поиску.\n"
             "- Вводи только числовые коды после нажатия *🔍 Поиск фильма*.\n"
