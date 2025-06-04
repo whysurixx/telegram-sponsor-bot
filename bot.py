@@ -166,15 +166,6 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "Давай искать фильм — напиши мне *код*! 🍿"
         )
         await edit_message_with_retry(context, query.message.chat_id, query.message.message_id, success_text)
-
-        if 'pending_movie_code' in context.user_data:
-            code = context.user_data.pop('pending_movie_code')
-            movie = find_movie_by_code(code)
-            result_text = (
-                f"*Вот твой фильм!* 🎥 Код {code}: *{movie['title']}* {random.choice(POSITIVE_EMOJIS)}" if movie
-                else f"Ой, фильм с кодом *{code}* не найден! 😢 Давай попробуем другой? 🔢"
-            )
-            await send_message_with_retry(query.message, result_text)
     else:
         logger.info(f"User {user_id} is not subscribed to some channels.")
         promo_text = (
@@ -185,6 +176,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard.append([InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await edit_message_with_retry(context, query.message.chat_id, query.message.message_id, promo_text, reply_markup)
+
 
 def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
     """Find a movie by its code in Google Sheets."""
@@ -222,8 +214,7 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     if not context.user_data.get('subscription_confirmed', False):
-        logger.info(f"User {user_id} has not confirmed subscription. Saving code {code} as pending.")
-        context.user_data['pending_movie_code'] = code
+        logger.info(f"User {user_id} has not confirmed subscription. Prompting to subscribe.")
         await prompt_subscribe(update, context)
         return
 
@@ -234,6 +225,7 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         else f"Ой, фильм с кодом *{code}* не найден! 😢 Давай попробуем другой? 🔢"
     )
     await send_message_with_retry(update.message, result_text)
+
 
 async def handle_non_numeric_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle non-numeric text input."""
