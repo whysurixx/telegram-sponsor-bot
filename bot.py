@@ -3,7 +3,7 @@ import logging
 import json
 import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telegram.error import RetryAfter
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -69,7 +69,7 @@ except Exception as e:
     logger.error(f"Error initializing Google Sheets: {e}")
     raise
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start(update: Update, context) -> None:
     """Handle the /start command."""
     user = update.message.from_user
     logger.info(f"User {user.id} {user.first_name} started the bot.")
@@ -113,7 +113,7 @@ async def edit_message_with_retry(context, chat_id: int, message_id: int, text: 
     except Exception as e:
         logger.warning(f"Failed to edit message: {e}")
 
-async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: Optional[int] = None) -> None:
+async def prompt_subscribe(update: Update, context, message_id: Optional[int] = None) -> None:
     """Prompt user to subscribe to channels."""
     promo_text = (
         "Чтобы продолжить поиск фильма, сначала подпишись на наших спонсоров!\n"
@@ -129,7 +129,7 @@ async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, m
     else:
         await send_message_with_retry(update.message, promo_text, reply_markup)
 
-async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def check_subscription(update: Update, context) -> None:
     """Check if the user is subscribed to all required channels."""
     query = update.callback_query
     await query.answer()
@@ -202,7 +202,7 @@ def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
         logger.error(f"Unknown error accessing Google Sheets: {e}")
         return None
 
-async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_movie_code(update: Update, context) -> None:
     """Handle numeric movie code input."""
     code = update.message.text.strip()
     user_id = update.message.from_user.id
@@ -226,7 +226,7 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
     await send_message_with_retry(update.message, result_text)
 
-async def handle_non_numeric_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_non_numeric_text(update: Update, context) -> None:
     """Handle non-numeric text input."""
     if update.message.from_user.id == context.bot.id:
         return  # Ignore messages sent by the bot itself
@@ -238,8 +238,8 @@ async def main() -> None:
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
-    application.add_handler(MessageHandler(Filters.text & ~Filters.command & Filters.regex(r'^\d+$'), handle_movie_code))
-    application.add_handler(MessageHandler(Filters.text & ~Filters.command & ~Filters.regex(r'^\d+$'), handle_non_numeric_text))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+$'), handle_movie_code))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^\d+$'), handle_non_numeric_text))
 
     full_webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
     logger.info(f"Setting webhook to: {full_webhook_url}")
