@@ -190,7 +190,7 @@ def handle_movie_code(update: Update, context: CallbackContext) -> None:
     logger.info(f"Пользователь {user_id} подтвердил подписку. Обрабатываем код: {code}")
     movie = find_movie_by_code(code)
     if movie:
-        update.message.reply_text(f"🎥 Фильм по коду \{code}\: \{movie['title']}\", parse_mode='Markdown')
+        update.message.reply_text(f"🎥 Фильм по коду {code}: {movie['title']}", parse_mode='Markdown')
     else:
         update.message.reply_text(f"К сожалению, фильм с кодом `{code}` не найден! Попробуй другой код.", parse_mode='Markdown')
 
