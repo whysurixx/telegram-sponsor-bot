@@ -171,11 +171,20 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.info(f"User {user_id} successfully confirmed subscription.")
         success_text = (
             "Супер, *ты в деле*! 🎉\n"
-            "Все каналы на месте, теперь ты настоящий киноман! 😍\n"
+            "Вы подписаны на все каналы! 😍 Теперь ты можешь продолжить работать с ботом!\n"
             f"{'Введи *числовой код* для поиска фильма! 🍿' if context.user_data.get('awaiting_code', False) else 'Выбери действие в меню ниже! 😎'}"
         )
-        reply_markup = get_main_keyboard() if not context.user_data.get('awaiting_code', False) else None
-        await edit_message_with_retry(context, query.message.chat_id, query.message.message_id, success_text, reply_markup)
+        # Send a new message instead of editing to avoid inline keyboard issues
+        await send_message_with_retry(
+            query.message,
+            success_text,
+            reply_markup=get_main_keyboard() if not context.user_data.get('awaiting_code', False) else None
+        )
+        # Optionally, delete the original inline keyboard message to clean up
+        try:
+            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
+        except Exception as e:
+            logger.warning(f"Failed to delete subscription prompt message: {e}")
     else:
         logger.info(f"User {user_id} is not subscribed to some channels.")
         promo_text = (
@@ -206,7 +215,7 @@ def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
         logger.info(f"Movie with code {code} not found.")
         return None
     except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API error: {e}")
+        logger.error(f_asset/artifact_cb0657cc-d230-4ff7-a5a5-2359da2d5e99_8b9b6b7b-1c2e-4a9f-9c7e-7f8b8c8d9e0a_telegram_bot.py:Google Sheets API error: {e}")
         return None
     except Exception as e:
         logger.error(f"Unknown error accessing Google Sheets: {e}")
