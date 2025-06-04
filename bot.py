@@ -2,9 +2,11 @@ import os
 import logging
 import json
 import time
-import asyncio
+from starlette.applications import Starlette
+from starlette.routing import Route
+from starlette.responses import PlainTextResponse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from telegram.error import RetryAfter
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -70,7 +72,10 @@ except Exception as e:
     logger.error(f"Error initializing Google Sheets: {e}")
     raise
 
-async def start(update: Update, context) -> None:
+# Initialize Telegram application
+application_tg = Application.builder().token(TOKEN).build()
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /start command."""
     user = update.message.from_user
     logger.info(f"User {user.id} {user.first_name} started the bot.")
@@ -91,7 +96,7 @@ async def send_message_with_retry(message, text: str, reply_markup: Optional[Inl
     except Exception as e:
         logger.warning(f"Failed to send message: {e}")
 
-async def edit_message_with_retry(context, chat_id: int, message_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
+async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
     """Edit a message with retry on flood control."""
     try:
         await context.bot.edit_message_text(
@@ -114,7 +119,7 @@ async def edit_message_with_retry(context, chat_id: int, message_id: int, text: 
     except Exception as e:
         logger.warning(f"Failed to edit message: {e}")
 
-async def prompt_subscribe(update: Update, context, message_id: Optional[int] = None) -> None:
+async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: Optional[int] = None) -> None:
     """Prompt user to subscribe to channels."""
     promo_text = (
         "Чтобы продолжить поиск фильма, сначала подпишись на наших спонсоров!\n"
@@ -130,7 +135,7 @@ async def prompt_subscribe(update: Update, context, message_id: Optional[int] = 
     else:
         await send_message_with_retry(update.message, promo_text, reply_markup)
 
-async def check_subscription(update: Update, context) -> None:
+async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Check if the user is subscribed to all required channels."""
     query = update.callback_query
     await query.answer()
@@ -203,7 +208,7 @@ def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
         logger.error(f"Unknown error accessing Google Sheets: {e}")
         return None
 
-async def handle_movie_code(update: Update, context) -> None:
+async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle numeric movie code input."""
     code = update.message.text.strip()
     user_id = update.message.from_user.id
@@ -227,40 +232,63 @@ async def handle_movie_code(update: Update, context) -> None:
     )
     await send_message_with_retry(update.message, result_text)
 
-async def handle_non_numeric_text(update: Update, context) -> None:
+async def handle_non_numeric_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle non-numeric text input."""
     if update.message.from_user.id == context.bot.id:
         return  # Ignore messages sent by the bot itself
     await send_message_with_retry(update.message, "Пожалуйста, введи *только числовой* код фильма. 🔢")
 
-async def main() -> None:
-    """Main function to run the bot."""
-    application = Application.builder().token(TOKEN).build()
+# Define the webhook endpoint
+async def webhook_endpoint(request):
+    try:
+        body = await request.body()
+        update = Update.de_json(json.loads(body.decode()), application_tg.bot)
+        if update:
+            await application_tg.process_update(update)
+        return PlainTextResponse("OK")
+    except Exception as e:
+        logger.error(f"Error processing webhook update: {e}")
+        return PlainTextResponse("Error", status_code=500)
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+$'), handle_movie_code))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^\d+$'), handle_non_numeric_text))
+# Define the ASGI application
+app = Starlette(
+    routes=[
+        Route(f"/{TOKEN}", endpoint=webhook_endpoint, methods=["POST"])
+    ]
+)
 
+# Set up the webhook and handlers on startup
+async def startup():
+    # Add handlers to the application
+    application_tg.add_handler(CommandHandler("start", start))
+    application_tg.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
+    application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+$'), handle_movie_code))
+    application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^\d+$'), handle_non_numeric_text))
+
+    # Initialize the application
+    await application_tg.initialize()
+
+    # Set the webhook
     full_webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
     logger.info(f"Setting webhook to: {full_webhook_url}")
-    logger.info(f"Using port: {PORT}")
-
     try:
-        await application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=TOKEN,
-            webhook_url=full_webhook_url
-        )
-        logger.info("Webhook started successfully.")
+        await application_tg.bot.set_webhook(webhook_url=full_webhook_url)
+        logger.info("Webhook set successfully.")
     except Exception as e:
-        logger.error(f"Failed to start webhook: {e}")
+        logger.error(f"Failed to set webhook: {e}")
         raise
 
-if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(main())
-    finally:
-        loop.close()
+    # Start the application
+    await application_tg.start()
+    logger.info("Application started successfully.")
+
+# Add startup event handler
+app.add_event_handler("startup", startup)
+
+# Optional: Add shutdown event handler
+async def shutdown():
+    await application_tg.stop()
+    await application_tg.shutdown()
+    logger.info("Application shut down successfully.")
+
+app.add_event_handler("shutdown", shutdown)
