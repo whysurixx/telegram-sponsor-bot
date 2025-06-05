@@ -8,8 +8,8 @@ from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.responses import PlainTextResponse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes
-from telegram.ext import filters  # Импорт filters корректен для v21.3
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ChatJoinRequestHandler, ContextTypes
+from telegram.ext import filters  # Импорт filters для других обработчиков
 from telegram.error import RetryAfter
 from google.oauth2.service_account import Credentials
 import gspread
@@ -165,7 +165,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Привет, *киноман*! 🎬\n"
         "Добро пожаловать в твой личный кино-гид! 🍿 Я помогу найти фильмы по секретным кодам и открою мир кино! 🚀\n"
         f"{'Ты был приглашён другом! 😎 ' if referrer_id else ''}"
-        "Выбери действие в меню ниже, и-beginнем приключение! 😎"
+        "Выбери действие в меню ниже, и начнём приключение! 😎"
     )
     await send_message_with_retry(update.message, welcome_text, reply_markup=get_main_keyboard())
 
@@ -529,7 +529,7 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = join_request.from_user
     user_id = user.id
     chat_id = join_request.chat.id
-    if chat_id in CHANNELS:
+    if str(chat_id) in CHANNELS:  # Ensure channel_id is string for comparison
         add_join_request(user_id, chat_id)
         logger.info(f"User {user_id} sent join request to channel {chat_id}")
 
@@ -566,7 +566,7 @@ async def startup():
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+$'), handle_movie_code))
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^\d+$'), handle_non_button_text))
-    application_tg.add_handler(MessageHandler(filters.ChatJoinRequest, handle_join_request))
+    application_tg.add_handler(ChatJoinRequestHandler(handle_join_request))  # Используем ChatJoinRequestHandler
 
     # Initialize application
     await application_tg.initialize()
