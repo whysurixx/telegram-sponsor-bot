@@ -1,6 +1,7 @@
 import os
 import logging
 import json
+import time
 import random
 import asyncio
 from starlette.applications import Starlette
@@ -13,8 +14,7 @@ from telegram.error import RetryAfter
 from google.oauth2.service_account import Credentials
 import gspread
 from typing import Optional, Dict, List
-import telegram
-import redis.asyncio as redis
+import telegram  # Для логирования версии
 
 # Configure logging
 logging.basicConfig(
@@ -22,6 +22,9 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Логируем версию python-telegram-bot
+logger.info(f"python-telegram-bot version: {telegram.__version__}")
 
 # Configuration from environment variables
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -71,12 +74,6 @@ movie_sheet = None
 user_sheet = None
 join_requests_sheet = None
 MOVIE_DICT = {}  # Cache for movie data
-USER_CACHE = {}  # Cache for user data
-JOIN_REQUESTS_CACHE = set()  # Cache for join requests
-PENDING_USER_UPDATES = []  # Queue for batch updates
-PENDING_JOIN_REQUESTS = []  # Queue for batch join request updates
-REDIS_CLIENT = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-
 try:
     if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
         logger.error(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
@@ -89,10 +86,12 @@ try:
     creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_PATH, scopes=scope)
     client = gspread.authorize(creds)
     
+    # Movie sheet
     movie_spreadsheet = client.open_by_key(MOVIE_SHEET_ID)
     movie_sheet = movie_spreadsheet.sheet1
     logger.info(f"Movie sheet initialized (ID: {MOVIE_SHEET_ID}).")
     
+    # User sheet
     user_spreadsheet = client.open_by_key(USER_SHEET_ID)
     try:
         user_sheet = user_spreadsheet.worksheet("Users")
@@ -102,6 +101,7 @@ try:
         logger.info(f"Created new 'Users' worksheet (ID: {USER_SHEET_ID}).")
     logger.info(f"User sheet initialized (ID: {USER_SHEET_ID}).")
     
+    # Join Requests sheet
     join_requests_spreadsheet = client.open_by_key(JOIN_REQUESTS_SHEET_ID)
     try:
         join_requests_sheet = join_requests_spreadsheet.worksheet("JoinRequests")
@@ -115,7 +115,7 @@ except Exception as e:
     raise
 
 # Initialize Telegram application
-application_tg = Application.builder().token(TOKEN).concurrent_updates(True).rate_limiter(True).connection_pool_size(20).build()
+application_tg = Application.builder().token(TOKEN).build()
 
 # Random emojis for responses
 POSITIVE_EMOJIS = ['😍', '🎉', '😎', '👍', '🔥', '😊', '😁', '⭐']
@@ -128,123 +128,15 @@ def get_main_reply_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
-# Cache sync functions
-async def sync_cache_periodically():
-    while True:
-        await asyncio.sleep(300)  # Sync every 5 minutes
-        try:
-            global USER_CACHE, JOIN_REQUESTS_CACHE
-            if user_sheet:
-                all_values = user_sheet.get_all_values()[1:]
-                USER_CACHE = {
-                    row[0]: {
-                        "user_id": row[0],
-                        "username": row[1] if len(row) > 1 else "",
-                        "first_name": row[2] if len(row) > 2 else "",
-                        "search_queries": row[3] if len(row) > 3 else "0",
-                        "invited_users": row[4] if len(row) > 4 else "0"
-                    } for row in all_values if row
-                }
-                for user_id, data in USER_CACHE.items():
-                    await REDIS_CLIENT.hset(f"user:{user_id}", mapping=data)
-            if join_requests_sheet:
-                all_values = join_requests_sheet.get_all_values()[1:]
-                JOIN_REQUESTS_CACHE = {(row[0], row[1]) for row in all_values if row and len(row) >= 2}
-                for user_id, channel_id in JOIN_REQUESTS_CACHE:
-                    await REDIS_CLIENT.sadd(f"join_requests:{user_id}", channel_id)
-            logger.info("Caches synced with Google Sheets and Redis.")
-        except Exception as e:
-            logger.error(f"Error syncing caches: {e}")
-
-async def batch_sync_to_sheets():
-    while True:
-        await asyncio.sleep(60)  # Sync every 60 seconds
-        try:
-            if PENDING_USER_UPDATES and user_sheet:
-                user_sheet.batch_update(PENDING_USER_UPDATES)
-                logger.info(f"Batch updated {len(PENDING_USER_UPDATES)} user records to Google Sheets.")
-                PENDING_USER_UPDATES.clear()
-            if PENDING_JOIN_REQUESTS and join_requests_sheet:
-                join_requests_sheet.batch_update(PENDING_JOIN_REQUESTS)
-                logger.info(f"Batch updated {len(PENDING_JOIN_REQUESTS)} join requests to Google Sheets.")
-                PENDING_JOIN_REQUESTS.clear()
-        except Exception as e:
-            logger.error(f"Error in batch sync to sheets: {e}")
-
-# Data access functions
-def get_user_data(user_id: int) -> Optional[Dict[str, str]]:
-    return USER_CACHE.get(str(user_id))
-
-def has_sent_join_request(user_id: int, channel_id: int) -> bool:
-    return (str(user_id), str(channel_id)) in JOIN_REQUESTS_CACHE
-
-def add_user(user_id: int, username: str, first_name: str, search_queries: int, invited_users: int) -> None:
-    if user_sheet is None:
-        logger.error("Users sheet not initialized.")
-        return
-    user_id_str = str(user_id)
-    data = {
-        "user_id": user_id_str,
-        "username": username,
-        "first_name": first_name,
-        "search_queries": str(search_queries),
-        "invited_users": str(invited_users)
-    }
-    USER_CACHE[user_id_str] = data
-    PENDING_USER_UPDATES.append({
-        "range": f"A{len(USER_CACHE) + 1}:E{len(USER_CACHE) + 1}",
-        "values": [[user_id_str, username, first_name, str(search_queries), str(invited_users)]]
-    })
-    asyncio.create_task(REDIS_CLIENT.hset(f"user:{user_id_str}", mapping=data))
-    logger.info(f"Queued user {user_id} addition with {search_queries} search queries.")
-
-def update_user(user_id: int, **kwargs) -> None:
-    if user_sheet is None:
-        logger.error("Users sheet not initialized.")
-        return
-    user_id_str = str(user_id)
-    user_data = USER_CACHE.get(user_id_str)
-    if not user_data:
-        logger.warning(f"User {user_id} not found for update.")
-        return
-    updates = user_data.copy()
-    updates.update(kwargs)
-    USER_CACHE[user_id_str] = updates
-    PENDING_USER_UPDATES.append({
-        "range": f"A{list(USER_CACHE.keys()).index(user_id_str) + 2}:E{list(USER_CACHE.keys()).index(user_id_str) + 2}",
-        "values": [[user_id_str, updates["username"], updates["first_name"], str(updates["search_queries"]), str(updates["invited_users"])]]
-    })
-    asyncio.create_task(REDIS_CLIENT.hset(f"user:{user_id_str}", mapping=updates))
-    logger.info(f"Queued update for user {user_id} in cache.")
-
-def add_join_request(user_id: int, channel_id: int) -> None:
-    if join_requests_sheet is None:
-        logger.error("JoinRequests sheet not initialized.")
-        return
-    user_id_str, channel_id_str = str(user_id), str(channel_id)
-    if (user_id_str, channel_id_str) in JOIN_REQUESTS_CACHE:
-        return
-    JOIN_REQUESTS_CACHE.add((user_id_str, channel_id_str))
-    PENDING_JOIN_REQUESTS.append({
-        "range": f"A{len(JOIN_REQUESTS_CACHE) + 1}:B{len(JOIN_REQUESTS_CACHE) + 1}",
-        "values": [[user_id_str, channel_id_str]]
-    })
-    asyncio.create_task(REDIS_CLIENT.sadd(f"join_requests:{user_id_str}", channel_id_str))
-    logger.info(f"Queued join request for user {user_id} to channel {channel_id}")
-
-def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
-    if code in MOVIE_DICT:
-        return {"code": code, "title": MOVIE_DICT[code]}
-    return None
-
-# Telegram handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the /start command, including referral links."""
     user = update.message.from_user
     user_id = user.id
     username = user.username or ""
     first_name = user.first_name or ""
     logger.info(f"User {user_id} {first_name} started the bot with message: {update.message.text}")
 
+    # Handle referral
     referrer_id = None
     if update.message.text.startswith("/start invite_"):
         try:
@@ -258,53 +150,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 context.user_data['referrer_id'] = referrer_id
         except (IndexError, ValueError):
             logger.warning(f"Invalid referral link for user {user_id}: {update.message.text}")
+            referrer_id = None
 
+    # Register or update user
     user_data = get_user_data(user_id)
     if not user_data:
-        add_user(user_id, username, first_name, search_queries=5, invited_users=0)
-        logger.info(f"Added user {user_id} to cache with 5 search queries.")
+        try:
+            add_user(user_id, username, first_name, search_queries=5, invited_users=0)
+            logger.info(f"Added user {user_id} to Users sheet with 5 search queries.")
+        except Exception as e:
+            logger.error(f"Failed to add user {user_id} to Users sheet: {e}")
     else:
         update_user(user_id, username=username, first_name=first_name)
         logger.info(f"Updated existing user {user_id}.")
 
-    unsubscribed_channels = []
-    async def check_channel(channel_id, button):
-        try:
-            member = await context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
-            if member.status not in ["member", "administrator", "creator"] and not has_sent_join_request(user_id, channel_id):
-                return button
-            return None
-        except Exception as e:
-            logger.error(f"Error checking subscription for channel {channel_id}: {e}")
-            return button
-
-    tasks = [check_channel(channel_id, button) for channel_id, button in zip(CHANNELS, CHANNEL_BUTTONS)]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    unsubscribed_channels = [r for r in results if r is not None]
-
-    if unsubscribed_channels:
-        await prompt_subscribe(update, context)
-    else:
-        context.user_data['subscription_confirmed'] = True
-        welcome_text = (
-            "Привет, *киноман*! 🎬\n"
-            "Добро пожаловать в твой личный кино-гид! 🍿 Я помогу найти фильмы по секретным кодам и открою мир кино! 🚀\n"
-            f"{'Ты был приглашён другом! 😎 ' if referrer_id else ''}"
-            "Выбери действие в меню ниже, и начнём приключение! 😎"
-        )
-        await send_message_with_retry(update.message, welcome_text, reply_markup=get_main_reply_keyboard())
+    welcome_text = (
+        "Привет, *киноман*! 🎬\n"
+        "Добро пожаловать в твой личный кино-гид! 🍿 Я помогу найти фильмы по секретным кодам и открою мир кино! 🚀\n"
+        f"{'Ты был приглашён другом! 😎 ' if referrer_id else ''}"
+        "Выбери действие в меню ниже, и начнём приключение! 😎"
+    )
+    await send_message_with_retry(update.message, welcome_text, reply_markup=get_main_reply_keyboard())
 
 async def send_message_with_retry(message, text: str, reply_markup=None) -> None:
+    """Send a message with retry on flood control."""
     try:
         await message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
     except RetryAfter as e:
         logger.warning(f"Flood control triggered: {e}. Waiting {e.retry_after} seconds.")
-        await asyncio.sleep(e.retry_after)
+        time.sleep(e.retry_after)
         await message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"Failed to send message: {e}, Response: {e.__dict__}")
 
 async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
+    """Edit a message with retry on flood control."""
     try:
         await context.bot.edit_message_text(
             chat_id=chat_id,
@@ -315,7 +195,7 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         )
     except RetryAfter as e:
         logger.warning(f"Flood control triggered: {e}. Waiting {e.retry_after} seconds.")
-        await asyncio.sleep(e.retry_after)
+        time.sleep(e.retry_after)
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
@@ -327,6 +207,7 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         logger.error(f"Failed to edit message: {e}, Response: {e.__dict__}")
 
 async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: Optional[int] = None) -> None:
+    """Prompt user to subscribe to channels."""
     promo_text = (
         "Эй, *кинофан*! 🎥\n"
         "Чтобы открыть доступ к фильмам, подпишись на наших крутых спонсоров! 🌟\n"
@@ -341,34 +222,51 @@ async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, m
     else:
         await send_message_with_retry(update.message, promo_text, reply_markup=reply_markup)
 
+def has_sent_join_request(user_id: int, channel_id: int) -> bool:
+    """Check if user has sent a join request to the channel."""
+    if join_requests_sheet is None:
+        logger.error("JoinRequests sheet not initialized.")
+        return False
+    try:
+        all_values = join_requests_sheet.get_all_values()[1:]  # Skip header
+        for row in all_values:
+            if row and len(row) >= 2 and row[0] == str(user_id) and row[1] == str(channel_id):
+                return True
+        return False
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error in has_sent_join_request: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unknown error in has_sent_join_request: {e}")
+        return False
+
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Check if the user is subscribed to all required channels or has sent join requests."""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     bot = context.bot
     unsubscribed_channels = []
 
-    async def check_channel(channel_id, button):
+    for channel_id, button in zip(CHANNELS, CHANNEL_BUTTONS):
         try:
             member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
             if member.status in ["member", "administrator", "creator"]:
-                return None
+                continue
             elif has_sent_join_request(user_id, channel_id):
-                return None
+                continue
             else:
-                return button
+                unsubscribed_channels.append(button)
+            await asyncio.sleep(0.1)  # Add 100ms delay to avoid rate limits
         except Exception as e:
             logger.error(f"Error checking subscription for channel {channel_id}: {e}")
-            return button
-
-    tasks = [check_channel(channel_id, button) for channel_id, button in zip(CHANNELS, CHANNEL_BUTTONS)]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    unsubscribed_channels = [r for r in results if r is not None]
+            unsubscribed_channels.append(button)
 
     if not unsubscribed_channels:
         context.user_data['subscription_confirmed'] = True
         logger.info(f"User {user_id} successfully confirmed subscription for all channels.")
 
+        # Process referral reward
         referrer_id = context.user_data.get('referrer_id')
         if referrer_id:
             referrer_data = get_user_data(referrer_id)
@@ -390,6 +288,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     logger.info(f"Sent referral reward notification to referrer {referrer_id}")
                 except Exception as e:
                     logger.error(f"Failed to send referral reward notification to {referrer_id}: {e}")
+
                 del context.user_data['referrer_id']
 
         success_text = (
@@ -405,7 +304,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             query.message.chat_id,
             query.message.message_id,
             success_text,
-            reply_markup=None
+            reply_markup=None  # Inline keyboard not needed here
         )
         if not context.user_data.get('awaiting_code', False):
             await send_message_with_retry(
@@ -430,7 +329,103 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_markup=reply_markup
         )
 
+def get_user_data(user_id: int) -> Optional[Dict[str, str]]:
+    """Retrieve user data from Users sheet."""
+    if user_sheet is None:
+        logger.error("Users sheet not initialized.")
+        return None
+    try:
+        all_values = user_sheet.get_all_values()[1:]  # Skip header
+        for row in all_values:
+            if not row or len(row) < 1:
+                continue
+            if row[0] == str(user_id):
+                return {
+                    "user_id": row[0],
+                    "username": row[1] if len(row) > 1 else "",
+                    "first_name": row[2] if len(row) > 2 else "",
+                    "search_queries": row[3] if len(row) > 3 else "0",
+                    "invited_users": row[4] if len(row) > 4 else "0"
+                }
+        return None
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error in get_user_data: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unknown error in get_user_data: {e}")
+        return None
+
+def add_user(user_id: int, username: str, first_name: str, search_queries: int, invited_users: int) -> None:
+    """Add a new user to Users sheet."""
+    if user_sheet is None:
+        logger.error("Users sheet not initialized.")
+        return
+    try:
+        row_to_add = [str(user_id), username, first_name, str(search_queries), str(invited_users)]
+        user_sheet.append_row(row_to_add)
+        logger.info(f"Added user {user_id} to Users sheet with {search_queries} search queries.")
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error in add_user: {e}")
+    except Exception as e:
+        logger.error(f"Unknown error in add_user: {e}")
+
+def update_user(user_id: int, **kwargs) -> None:
+    """Update user data in Users sheet."""
+    if user_sheet is None:
+        logger.error("Users sheet not initialized.")
+        return
+    try:
+        all_values = user_sheet.get_all_values()
+        for idx, row in enumerate(all_values[1:], start=2):  # Skip header
+            if not row or len(row) < 1 or row[0] != str(user_id):
+                continue
+            updates = {
+                "username": row[1] if len(row) > 1 else "",
+                "first_name": row[2] if len(row) > 2 else "",
+                "search_queries": row[3] if len(row) > 3 else "0",
+                "invited_users": row[4] if len(row) > 4 else "0"
+            }
+            updates.update(kwargs)
+            user_sheet.update(f"A{idx}:E{idx}", [[
+                str(user_id),
+                updates["username"],
+                updates["first_name"],
+                str(updates["search_queries"]),
+                str(updates["invited_users"])
+            ]])
+            logger.info(f"Updated user {user_id} in Users sheet.")
+            return
+        logger.warning(f"User {user_id} not found for update.")
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error in update_user: {e}")
+    except Exception as e:
+        logger.error(f"Unknown error in update_user: {e}")
+
+def add_join_request(user_id: int, channel_id: int) -> None:
+    """Add a join request to JoinRequests sheet."""
+    if join_requests_sheet is None:
+        logger.error("JoinRequests sheet not initialized.")
+        return
+    try:
+        all_values = join_requests_sheet.get_all_values()[1:]  # Skip header
+        for row in all_values:
+            if row and len(row) >= 2 and row[0] == str(user_id) and row[1] == str(channel_id):
+                return  # Already exists
+        join_requests_sheet.append_row([str(user_id), str(channel_id)])
+        logger.info(f"Added join request for user {user_id} to channel {channel_id}")
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error in add_join_request: {e}")
+    except Exception as e:
+        logger.error(f"Unknown error in add_join_request: {e}")
+
+def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
+    """Find a movie by its code in cached MOVIE_DICT."""
+    if code in MOVIE_DICT:
+        return {"code": code, "title": MOVIE_DICT[code]}
+    return None
+
 async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle numeric movie code input."""
     code = update.message.text.strip()
     user_id = update.message.from_user.id
 
@@ -444,10 +439,12 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await send_message_with_retry(update.message, "Ой, нужен *только числовой код*! 😊 Введи цифры, и мы найдём твой фильм! 🔢", reply_markup=ReplyKeyboardRemove())
         return
 
+    # Check search queries
     user_data = get_user_data(user_id)
     if not user_data:
-        logger.error(f"User {user_id} not found in cache.")
-        await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота.", reply_markup=get_main_reply_keyboard())
+        logger.error(f"User {user_id} not found in Users sheet.")
+        await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота
+.", reply_markup=get_main_reply_keyboard())
         return
     search_queries = int(user_data.get("search_queries", 0))
     if search_queries <= 0:
@@ -464,6 +461,7 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     movie = find_movie_by_code(code)
     context.user_data['awaiting_code'] = False
     if movie:
+        # Decrement search queries
         update_user(user_id, search_queries=search_queries - 1)
         result_text = (
             f"*Бинго!* 🎥 Код {code}: *{movie['title']}* {random.choice(POSITIVE_EMOJIS)}\n"
@@ -474,71 +472,62 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         result_text = f"Упс, фильм с кодом *{code}* не найден! 😢 Проверь код или попробуй другой! 🔍"
     await send_message_with_retry(update.message, result_text, reply_markup=get_main_reply_keyboard())
 
-async def search_movie(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.user_data.get('subscription_confirmed', False):
-        logger.info(f"User {update.message.from_user.id} pressed Search without subscription.")
-        await prompt_subscribe(update, context)
-        return
-    context.user_data['awaiting_code'] = True
-    await send_message_with_retry(update.message, "Отлично! 😎 Введи *числовой код* фильма, и я найду его для тебя! 🍿", reply_markup=ReplyKeyboardRemove())
-
-async def referral_system(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.user_data.get('subscription_confirmed', False):
-        logger.info(f"User {update.message.from_user.id} pressed Referral without subscription.")
-        await prompt_subscribe(update, context)
-        return
-    user_id = update.message.from_user.id
-    user_data = get_user_data(user_id)
-    if not user_data:
-        await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота.", reply_markup=get_main_reply_keyboard())
-        return
-    referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
-    invited_users = user_data.get("invited_users", "0")
-    search_queries = user_data.get("search_queries", "0")
-    referral_text = (
-        "🔥 *Реферальная система* 🔥\n\n"
-        "Приглашай друзей и получай *+2 поиска* за каждого, кто перейдёт по твоей ссылке и подпишется на наши каналы! 🚀\n\n"
-        f"Твоя реферальная ссылка: {referral_link}\n"
-        "Нажми на ссылку, чтобы поделиться, или скопируй её для друзей! 😎\n\n"
-        f"👥 *Количество добавленных пользователей*: *{invited_users}*\n"
-        f"🔍 *Количество оставшихся запросов*: *{search_queries}*"
-    )
-    await send_message_with_retry(update.message, referral_text, reply_markup=get_main_reply_keyboard())
-
-async def how_it_works(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    how_it_works_text = (
-        "🎬 *Как работает наш кино-бот?* 🎥\n\n"
-        "Я — твой личный помощник в мире кино! 🍿 Моя главная задача — помочь тебе найти фильмы по секретным числовым кодам. Вот как это работает:\n\n"
-        "🔍 *Поиск фильмов*:\n"
-        "1. Нажми на кнопку *🔍 Поиск фильма* в меню.\n"
-        "2. Подпишись на наши крутые спонсорские каналы или отправь заявку на вступление (это обязательно! 😎).\n"
-        "3. Введи *числовой код* фильма (только цифры!).\n"
-        "4. Я найду фильм в нашей базе и покажу его название! 🎉\n\n"
-        "👥 *Реферальная система*:\n"
-        "- У тебя есть *5 бесплатных поисков* при старте! 🚀\n"
-        "- Приглашай друзей в бота, и за каждого, кто подпишется на каналы, ты получишь *+2 поиска*! 🌟\n"
-        "- Если поиски закончились, приглашай друзей, чтобы продолжить! 😍\n\n"
-        "❗ *Важно*:\n"
-        "- Подписка или заявка на вступление в каналы обязательна для доступа к поиску.\n"
-        "- Вводи только числовые коды после нажатия *🔍 Поиск фильма*.\n"
-        "- Если что-то пошло не так, просто следуй подсказкам, и я помогу! 😊\n\n"
-        "Готов к кино-приключению? Выбери действие в меню! 👇"
-    )
-    await send_message_with_retry(update.message, how_it_works_text, reply_markup=get_main_reply_keyboard())
-
-BUTTON_HANDLERS = {
-    "🔍 Поиск фильма": search_movie,
-    "👥 Реферальная система": referral_system,
-    "❓ Как работает бот": how_it_works
-}
-
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle custom button presses from reply keyboard."""
     if update.message and update.message.from_user:
         user_id = update.message.from_user.id
         text = update.message.text
-        handler = BUTTON_HANDLERS.get(text)
-        if handler:
-            await handler(update, context)
+
+        if text == "🔍 Поиск фильма":
+            if not context.user_data.get('subscription_confirmed', False):
+                logger.info(f"User {user_id} pressed Search without subscription.")
+                await prompt_subscribe(update, context)
+                return
+            context.user_data['awaiting_code'] = True
+            await send_message_with_retry(update.message, "Отлично! 😎 Введи *числовой код* фильма, и я найду его для тебя! 🍿", reply_markup=ReplyKeyboardRemove())
+        elif text == "👥 Реферальная система":
+            if not context.user_data.get('subscription_confirmed', False):
+                logger.info(f"User {user_id} pressed Referral without subscription.")
+                await prompt_subscribe(update, context)
+                return
+            user_data = get_user_data(user_id)
+            if not user_data:
+                logger.error(f"User {user_id} not found in Users sheet.")
+                await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота.", reply_markup=get_main_reply_keyboard())
+                return
+            referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
+            logger.info(f"Generated referral link for user {user_id}: {referral_link}")
+            invited_users = user_data.get("invited_users", "0")
+            search_queries = user_data.get("search_queries", "0")
+            referral_text = (
+                "🔥 *Реферальная система* 🔥\n\n"
+                "Приглашай друзей и получай *+2 поиска* за каждого, кто перейдёт по твоей ссылке и подпишется на наши каналы! 🚀\n\n"
+                f"Твоя реферальная ссылка: {referral_link}\n"
+                "Нажми на ссылку, чтобы поделиться, или скопируй её для друзей! 😎\n\n"
+                f"👥 *Количество добавленных пользователей*: *{invited_users}*\n"
+                f"🔍 *Количество оставшихся запросов*: *{search_queries}*"
+            )
+            await send_message_with_retry(update.message, referral_text, reply_markup=get_main_reply_keyboard())
+        elif text == "❓ Как работает бот":
+            how_it_works_text = (
+                "🎬 *Как работает наш кино-бот?* 🎥\n\n"
+                "Я — твой личный помощник в мире кино! 🍿 Моя главная задача — помочь тебе найти фильмы по секретным числовым кодам. Вот как это работает:\n\n"
+                "🔍 *Поиск фильмов*:\n"
+                "1. Нажми на кнопку *🔍 Поиск фильма* в меню.\n"
+                "2. Подпишись на наши крутые спонсорские каналы или отправь заявку на вступление (это обязательно! 😎).\n"
+                "3. Введи *числовой код* фильма (только цифры!).\n"
+                "4. Я найду фильм в нашей базе и покажу его название! 🎉\n\n"
+                "👥 *Реферальная система*:\n"
+                "- У тебя есть *5 бесплатных поисков* при старте! 🚀\n"
+                "- Приглашай друзей в бота, и за каждого, кто подпишется на каналы, ты получишь *+2 поиска*! 🌟\n"
+                "- Если поиски закончились, приглашай друзей, чтобы продолжить! 😍\n\n"
+                "❗ *Важно*:\n"
+                "- Подписка или заявка на вступление в каналы обязательна для доступа к поиску.\n"
+                "- Вводи только числовые коды после нажатия *🔍 Поиск фильма*.\n"
+                "- Если что-то пошло не так, просто следуй подсказкам, и я помогу! 😊\n\n"
+                "Готов к кино-приключению? Выбери действие в меню! 👇"
+            )
+            await send_message_with_retry(update.message, how_it_works_text, reply_markup=get_main_reply_keyboard())
         else:
             logger.info(f"User {user_id} sent unknown command: {text}")
             await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню ниже! 👇", reply_markup=get_main_reply_keyboard())
@@ -547,12 +536,14 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
 async def handle_non_button_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle non-button text input."""
     if update.message.from_user.id == context.bot["id"]:
         return
     logger.info(f"User {update.message.from_user.id} sent non-button text: {update.message.text}")
     await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню! 👇", reply_markup=get_main_reply_keyboard())
 
 async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle chat join request updates."""
     join_request = update.chat_join_request
     user = join_request.from_user
     user_id = user.id
@@ -562,6 +553,7 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info(f"User {user_id} sent join request to channel {chat_id}")
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle errors gracefully."""
     logger.error(f"Update {update} caused error: {context.error}")
     if update.callback_query:
         await update.callback_query.answer()
@@ -604,6 +596,7 @@ app = Starlette(
 )
 
 async def startup():
+    """Initialize the bot and load movie data into cache."""
     # Add handlers
     application_tg.add_error_handler(error_handler)
     application_tg.add_handler(CommandHandler("start", start))
@@ -620,51 +613,11 @@ async def startup():
     global MOVIE_DICT
     if movie_sheet:
         try:
-            all_values = movie_sheet.get_all_values()[1:]
+            all_values = movie_sheet.get_all_values()[1:]  # Skip header
             MOVIE_DICT = {row[0].strip(): row[1].strip() for row in all_values if row and len(row) >= 2}
             logger.info(f"Loaded {len(MOVIE_DICT)} movies into cache.")
         except Exception as e:
             logger.error(f"Error loading movie data into cache: {e}")
-
-    # Load user and join request data into cache
-    global USER_CACHE, JOIN_REQUESTS_CACHE
-    if user_sheet:
-        try:
-            all_values = user_sheet.get_all_values()[1:]
-            USER_CACHE = {
-                row[0]: {
-                    "user_id": row[0],
-                    "username": row[1] if len(row) > 1 else "",
-                    "first_name": row[2] if len(row) > 2 else "",
-                    "search_queries": row[3] if len(row) > 3 else "0",
-                    "invited_users": row[4] if len(row) > 4 else "0"
-                } for row in all_values if row
-            }
-            for user_id, data in USER_CACHE.items():
-                await REDIS_CLIENT.hset(f"user:{user_id}", mapping=data)
-            logger.info(f"Loaded {len(USER_CACHE)} users into cache.")
-        except Exception as e:
-            logger.error(f"Error loading user data into cache: {e}")
-    if join_requests_sheet:
-        try:
-            all_values = join_requests_sheet.get_all_values()[1:]
-            JOIN_REQUESTS_CACHE = {(row[0], row[1]) for row in all_values if row and len(row) >= 2}
-            for user_id, channel_id in JOIN_REQUESTS_CACHE:
-                await REDIS_CLIENT.sadd(f"join_requests:{user_id}", channel_id)
-            logger.info(f"Loaded {len(JOIN_REQUESTS_CACHE)} join requests into cache.")
-        except Exception as e:
-            logger.error(f"Error loading join requests into cache: {e}")
-
-    # Connect to Redis
-    try:
-        await REDIS_CLIENT.ping()
-        logger.info("Connected to Redis.")
-    except Exception as e:
-        logger.error(f"Failed to connect to Redis: {e}")
-
-    # Start periodic sync tasks
-    asyncio.create_task(sync_cache_periodically())
-    asyncio.create_task(batch_sync_to_sheets())
 
     # Set webhook
     full_webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
@@ -677,9 +630,9 @@ async def startup():
         raise
 
 async def shutdown():
+    """Shut down the application."""
     await application_tg.stop()
     await application_tg.shutdown()
-    await REDIS_CLIENT.close()
     logger.info("Application shut down successfully.")
 
 app.add_event_handler("startup", startup)
