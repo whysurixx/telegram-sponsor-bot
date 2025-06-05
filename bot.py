@@ -246,21 +246,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await send_message_with_retry(update.message, welcome_text, reply_markup=get_main_reply_keyboard())
 
-async def send_message_with_retry(message, text: str, reply_markup=None) -> None:
+async def send_message_with_retry(message, text: str, reply_markup=None, parse_mode: str = 'Markdown') -> None:
     """Send a message with retry on flood control."""
     try:
-        await message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+        await message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     except RetryAfter as e:
         logger.warning(f"Flood control triggered: {e}. Waiting {e.retry_after} seconds.")
         await asyncio.sleep(e.retry_after)
-        await message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+        await message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"Failed to send message: {e}, Response: {e.__dict__}")
-        # Попробуем отправить без Markdown
+        # Try sending without parse_mode
         try:
             await message.reply_text(text, reply_markup=reply_markup)
         except Exception as e2:
-            logger.error(f"Failed to send message without Markdown: {e2}")
+            logger.error(f"Failed to send message without parse_mode: {e2}")
 
 async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
     """Edit a message with retry on flood control."""
@@ -284,7 +284,7 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         )
     except Exception as e:
         logger.error(f"Failed to edit message: {e}, Response: {e.__dict__}")
-        # Попробуем редактировать без Markdown
+        # Try editing without Markdown
         try:
             await context.bot.edit_message_text(
                 chat_id=chat_id,
@@ -571,28 +571,24 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     reply_markup=get_main_reply_keyboard()
                 )
         elif text == "👥 Реферальная система":
-    	user_data = get_user_data(user_id)
-    	if not user_data:
-
-        logger.error(f"User {user_id} not found in Users sheet.")
-        await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота.", reply_markup=get_main_reply_keyboard())
-        return
-
-    	referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
-    	logger.info(f"Generated referral link for user {user_id}: {referral_link}")
-    	invited_users = user_data.get("invited_users", "0")
-    	search_queries = user_data.get("search_queries", "0")
-
-    	referral_text = (
-        	"🔥 *Реферальная система* 🔥\n\n"
-        	"Приглашай друзей и получай *+2 поиска* за каждого, кто перейдёт по твоей ссылке и подпишется на наши каналы! 🚀\n\n"
-        	f"Твоя реферальная ссылка: {referral_link}\n"
-        	"Нажми на ссылку, чтобы поделиться, или скопируй её для друзей! 😎\n\n"
-        	f"👥 *Количество добавленных пользователей*: *{invited_users}*\n"
-        	f"🔍 *Количество оставшихся запросов*: *{search_queries}*"
-    	)
-
-    await send_message_with_retry(update.message, referral_text, reply_markup=get_main_reply_keyboard())
+            user_data = get_user_data(user_id)
+            if not user_data:
+                logger.error(f"User {user_id} not found in Users sheet.")
+                await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота.", reply_markup=get_main_reply_keyboard(), parse_mode='Markdown')
+                return
+            referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
+            logger.info(f"Generated referral link for user {user_id}: {referral_link}")
+            invited_users = user_data.get("invited_users", "0")
+            search_queries = user_data.get("search_queries", "0")
+            referral_text = (
+                "<b>🔥 Реферальная система 🔥</b>\n\n"
+                "Приглашай друзей и получай <b>+2 поиска</b> за каждого, кто перейдёт по твоей ссылке и подпишется на наши каналы! 🚀\n\n"
+                f"Твоя реферальная ссылка: <a href='{referral_link}'>{referral_link}</a>\n"
+                "Нажми на ссылку, чтобы поделиться, или скопируй её для друзей! 😎\n\n"
+                f"👥 <b>Количество добавленных пользователей</b>: <b>{invited_users}</b>\n"
+                f"🔍 <b>Количество оставшихся запросов</b>: <b>{search_queries}</b>"
+            )
+            await send_message_with_retry(update.message, referral_text, reply_markup=get_main_reply_keyboard(), parse_mode='HTML')
         elif text == "❓ Как работает бот":
             how_it_works_text = (
                 "🎬 *Как работает наш кино-бот?* 🎥\n\n"
