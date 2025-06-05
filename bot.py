@@ -4,9 +4,8 @@ import json
 import time
 import random
 import asyncio
-from starlette.applications import Starlette
-from starlette.routing import Route
-from starlette.responses import PlainTextResponse
+import sys
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ChatJoinRequestHandler, ContextTypes
 from telegram.ext import filters
@@ -15,6 +14,8 @@ from google.oauth2.service_account import Credentials
 from gspread_asyncio import AsyncioGspreadClientManager
 from typing import Optional, Dict, List
 import telegram  # Для логирования версии
+from tenacity import retry, stop_after_attempt, wait_fixed
+from cachetools import LRUCache
 
 # Configure logging
 logging.basicConfig(
@@ -28,8 +29,6 @@ logger.info(f"python-telegram-bot version: {telegram.__version__}")
 
 # Configuration from environment variables
 TOKEN = os.environ.get("BOT_TOKEN")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-PORT = int(os.environ.get("PORT", 10000))
 GOOGLE_CREDENTIALS_PATH = "/etc/secrets/GOOGLE_CREDENTIALS"
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 
@@ -59,9 +58,6 @@ except ValueError as e:
     raise
 
 # Validate environment variables
-if not WEBHOOK_URL:
-    logger.error("WEBHOOK_URL is not set!")
-    raise ValueError("WEBHOOK_URL is not set!")
 if not TOKEN:
     logger.error("BOT_TOKEN is not set!")
     raise ValueError("BOT_TOKEN is not set!")
@@ -73,10 +69,11 @@ if not BOT_USERNAME:
 movie_sheet = None
 user_sheet = None
 join_requests_sheet = None
-MOVIE_DICT = {}  # Cache for movie data
-USER_DICT = {}   # Cache for user data
-JOIN_REQUESTS_DICT = {}  # Cache for join requests
-CACHE_REFRESH_INTERVAL = 300  # Refresh cache every 5 minutes (in seconds)
+MOVIE_DICT = LRUCache(maxsize=5000)  # Cache for movie data with max 5000 entries
+USER_DICT = LRUCache(maxsize=5000)   # Cache for user data with max 5000 entries
+JOIN_REQUESTS_DICT = {}              # Cache for join requests
+MOVIE_CACHE_REFRESH_INTERVAL = 60    # Refresh movie cache every 1 minute
+OTHER_CACHE_REFRESH_INTERVAL = 300   # Refresh user and join requests cache every 5 minutes
 
 async def init_google_sheets():
     global movie_sheet, user_sheet, join_requests_sheet
@@ -121,23 +118,34 @@ async def init_google_sheets():
         logger.error(f"Error initializing Google Sheets: {e}")
         raise
 
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def load_movie_cache():
-    """Load movie data into cache from Google Sheets."""
+    """Load movie data into cache from Google Sheets incrementally."""
     global MOVIE_DICT
     try:
-        all_values = await movie_sheet.get_all_values()
-        MOVIE_DICT = {row[0].strip(): row[1].strip() for row in all_values[1:] if row and len(row) >= 2}
-        logger.info(f"Loaded {len(MOVIE_DICT)} movies into cache.")
+        # Get the last processed row, default to 0 if not set
+        last_row = getattr(load_movie_cache, "last_row", 0)
+        # Fetch only new rows starting from last_row + 1
+        range_val = f"A{last_row+1}:B"
+        new_values = await movie_sheet.get_values(range_val) or []
+        for row in new_values:
+            if len(row) >= 2:
+                MOVIE_DICT[row[0].strip()] = row[1].strip()
+        # Update last_row to the total number of rows processed
+        total_rows = last_row + len(new_values)
+        load_movie_cache.last_row = total_rows
+        logger.info(f"Loaded {len(new_values)} new movies into cache. Total in cache: {len(MOVIE_DICT)}")
     except Exception as e:
         logger.error(f"Error loading movie data into cache: {e}")
         # Keep existing cache if refresh fails
 
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def load_user_cache():
     """Load user data into cache from Google Sheets."""
     global USER_DICT
     try:
         all_values = await user_sheet.get_all_values()
-        USER_DICT = {
+        new_dict = {
             row[0]: {
                 "user_id": row[0],
                 "username": row[1] if len(row) > 1 else "",
@@ -146,33 +154,63 @@ async def load_user_cache():
                 "invited_users": row[4] if len(row) > 4 else "0"
             } for row in all_values[1:] if row and len(row) >= 1
         }
+        USER_DICT.clear()
+        USER_DICT.update(new_dict)
         logger.info(f"Loaded {len(USER_DICT)} users into cache.")
     except Exception as e:
         logger.error(f"Error loading user cache: {e}")
         # Keep existing cache if refresh fails
 
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def load_join_requests_cache():
     """Load join requests into cache from Google Sheets."""
     global JOIN_REQUESTS_DICT
     try:
         all_values = await join_requests_sheet.get_all_values()
-        JOIN_REQUESTS_DICT = {(row[0], row[1]): True for row in all_values[1:] if row and len(row) >= 2}
+        new_dict = {(row[0], row[1]): True for row in all_values[1:] if row and len(row) >= 2}
+        # Limit to 10,000 entries to prevent memory bloat
+        if len(new_dict) > 10000:
+            new_dict = dict(list(new_dict.items())[-10000:])
+        JOIN_REQUESTS_DICT.clear()
+        JOIN_REQUESTS_DICT.update(new_dict)
         logger.info(f"Loaded {len(JOIN_REQUESTS_DICT)} join requests into cache.")
     except Exception as e:
         logger.error(f"Error loading join requests cache: {e}")
         # Keep existing cache if refresh fails
 
-async def refresh_caches_periodically():
-    """Periodically refresh all caches in the background."""
+async def log_cache_size():
+    """Log the memory size of caches periodically."""
+    while True:
+        try:
+            movie_size = sys.getsizeof(MOVIE_DICT) + sum(sys.getsizeof(k) + sys.getsizeof(v) for k, v in MOVIE_DICT.items())
+            user_size = sys.getsizeof(USER_DICT) + sum(sys.getsizeof(k) + sys.getsizeof(v) for k, v in USER_DICT.items())
+            join_requests_size = sys.getsizeof(JOIN_REQUESTS_DICT) + sum(sys.getsizeof(k) for k in JOIN_REQUESTS_DICT)
+            logger.info(f"Cache sizes: movies={movie_size/1024:.2f} KB, users={user_size/1024:.2f} KB, join_requests={join_requests_size/1024:.2f} KB")
+            await asyncio.sleep(3600)  # Log every hour
+        except Exception as e:
+            logger.error(f"Error logging cache size: {e}")
+            await asyncio.sleep(3600)
+
+async def refresh_movie_cache_periodically():
+    """Periodically refresh movie cache in the background."""
     while True:
         try:
             await load_movie_cache()
+            await asyncio.sleep(MOVIE_CACHE_REFRESH_INTERVAL)
+        except Exception as e:
+            logger.error(f"Error during movie cache refresh: {e}")
+            await asyncio.sleep(MOVIE_CACHE_REFRESH_INTERVAL)
+
+async def refresh_other_caches_periodically():
+    """Periodically refresh user and join requests caches in the background."""
+    while True:
+        try:
             await load_user_cache()
             await load_join_requests_cache()
-            await asyncio.sleep(CACHE_REFRESH_INTERVAL)
+            await asyncio.sleep(OTHER_CACHE_REFRESH_INTERVAL)
         except Exception as e:
-            logger.error(f"Error during periodic cache refresh: {e}")
-            await asyncio.sleep(CACHE_REFRESH_INTERVAL)  # Retry after delay
+            logger.error(f"Error during other caches refresh: {e}")
+            await asyncio.sleep(OTHER_CACHE_REFRESH_INTERVAL)
 
 # Initialize Telegram application
 application_tg = Application.builder().token(TOKEN).build()
@@ -481,6 +519,10 @@ async def add_join_request(user_id: int, channel_id: int) -> None:
         await join_requests_sheet.append_row([user_id_str, channel_id_str])
         # Update cache incrementally
         JOIN_REQUESTS_DICT[(user_id_str, channel_id_str)] = True
+        # Limit to 10,000 entries
+        if len(JOIN_REQUESTS_DICT) > 10000:
+            oldest_key = next(iter(JOIN_REQUESTS_DICT))
+            del JOIN_REQUESTS_DICT[oldest_key]
         logger.info(f"Added join request for user {user_id} to channel {channel_id}")
     except Exception as e:
         logger.error(f"Failed to add join request for user {user_id} to channel {channel_id}: {e}")
@@ -652,33 +694,8 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             reply_markup=get_main_reply_keyboard()
         )
 
-# Webhook endpoint
-async def webhook_endpoint(request):
-    try:
-        body = await request.body()
-        update = Update.de_json(json.loads(body.decode()), application_tg.bot)
-        if update:
-            logger.info(f"Received update: {update.to_json()}")
-            await application_tg.process_update(update)
-        return PlainTextResponse("OK")
-    except Exception as e:
-        logger.error(f"Error processing webhook update: {e}")
-        return PlainTextResponse("Error", status_code=500)
-
-# Health check endpoint
-async def health_check(request):
-    return PlainTextResponse("OK", status_code=200)
-
-# ASGI application
-app = Starlette(
-    routes=[
-        Route(f"/{TOKEN}", endpoint=webhook_endpoint, methods=["POST"]),
-        Route("/", endpoint=health_check, methods=["GET", "HEAD"])
-    ]
-)
-
-async def startup():
-    """Initialize the bot and load caches."""
+async def main():
+    """Initialize the bot, load caches, and start polling."""
     # Initialize Google Sheets
     await init_google_sheets()
 
@@ -691,33 +708,27 @@ async def startup():
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^\d+$'), handle_non_button_text))
     application_tg.add_handler(ChatJoinRequestHandler(handle_join_request))
 
-    # Initialize application
-    await application_tg.initialize()
-
     # Load initial caches
     await load_movie_cache()
     await load_user_cache()
     await load_join_requests_cache()
 
-    # Start periodic cache refresh
-    asyncio.create_task(refresh_caches_periodically())
-    logger.info("Started periodic cache refresh task.")
+    # Start periodic cache refresh tasks
+    asyncio.create_task(refresh_movie_cache_periodically())
+    asyncio.create_task(refresh_other_caches_periodically())
+    asyncio.create_task(log_cache_size())
+    logger.info("Started periodic cache refresh and logging tasks.")
 
-    # Set webhook
-    full_webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
-    logger.info(f"Setting webhook to: {full_webhook_url}")
-    try:
-        await application_tg.bot.set_webhook(url=full_webhook_url)
-        logger.info("Webhook set successfully.")
-    except Exception as e:
-        logger.error(f"Failed to set webhook: {e}")
-        raise
+    # Start polling
+    logger.info("Starting bot with polling...")
+    await application_tg.initialize()
+    await application_tg.start()
+    await application_tg.updater.start_polling()
+    logger.info("Bot started successfully. Polling for updates...")
 
-async def shutdown():
-    """Shut down the application."""
-    await application_tg.stop()
-    await application_tg.shutdown()
-    logger.info("Application shut down successfully.")
+    # Keep the bot running
+    while True:
+        await asyncio.sleep(3600)  # Sleep to keep the main coroutine alive
 
-app.add_event_handler("startup", startup)
-app.add_event_handler("shutdown", shutdown)
+if __name__ == "__main__":
+    asyncio.run(main())
