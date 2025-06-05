@@ -126,7 +126,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             referrer_id = int(update.message.text.split("invite_")[1])
             if referrer_id == user_id:
                 logger.info(f"User {user_id} tried to invite themselves.")
-                referrer_id = None
+                await send_message_with_retry(update.message, "❌ Вы не можете пригласить себя!", reply_markup=get_main_keyboard())
+                return
             else:
                 logger.info(f"Referral detected for user {user_id} from referrer {referrer_id}")
                 context.user_data['referrer_id'] = referrer_id
@@ -230,12 +231,25 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if referrer_id:
             referrer_data = get_user_data(referrer_id)
             if referrer_data:
+                new_invited_users = int(referrer_data.get("invited_users", 0)) + 1
+                new_search_queries = int(referrer_data.get("search_queries", 0)) + 2
                 update_user(
                     referrer_id,
-                    invited_users=int(referrer_data.get("invited_users", 0)) + 1,
-                    search_queries=int(referrer_data.get("search_queries", 0)) + 2
+                    invited_users=new_invited_users,
+                    search_queries=new_search_queries
                 )
-                logger.info(f"Referral reward processed for referrer {referrer_id} by user {user_id}.")
+                logger.info(f"Added 2 search queries to referrer {referrer_id} for inviting user {user_id}")
+                # Отправляем уведомление рефереру
+                try:
+                    await bot.send_message(
+                        chat_id=referrer_id,
+                        text=f"🎉 Поздравляем! Ваш друг (ID: {user_id}) подписался на каналы и начал использовать бота. Вам начислено *+2 поиска*!",
+                        parse_mode='Markdown'
+                    )
+                    logger.info(f"Sent referral reward notification to referrer {referrer_id}")
+                except Exception as e:
+                    logger.error(f"Failed to send referral reward notification to {referrer_id}: {e}")
+
                 del context.user_data['referrer_id']
 
         success_text = (
@@ -390,69 +404,74 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle custom button presses."""
-    user_id = update.message.from_user.id
-    text = update.message.text
+    # Проверяем, что обновление содержит сообщение от пользователя
+    if update.message and update.message.from_user:
+        user_id = update.message.from_user.id
+        text = update.message.text
 
-    if text == "🔍 Поиск фильма":
-        if not context.user_data.get('subscription_confirmed', False):
-            logger.info(f"User {user_id} pressed Search without subscription.")
-            await prompt_subscribe(update, context)
-            return
-        context.user_data['awaiting_code'] = True
-        await send_message_with_retry(update.message, "Отлично! 😎 Введи *числовой код* фильма, и я найду его для тебя! 🍿")
-    elif text == "👥 Реферальная система":
-        if not context.user_data.get('subscription_confirmed', False):
-            logger.info(f"User {user_id} pressed Referral without subscription.")
-            await prompt_subscribe(update, context)
-            return
-        user_data = get_user_data(user_id)
-        if not user_data:
-            logger.error(f"User {user_id} not found in Users sheet.")
-            await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота или напиши в поддержку.", reply_markup=get_main_keyboard())
-            return
-        referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
-        logger.info(f"Generated referral link for user {user_id}: {referral_link}")
-        invited_users = user_data.get("invited_users", "0")
-        search_queries = user_data.get("search_queries", "0")
-        referral_text = (
-            "🔥 *Реферальная система* 🔥\n\n"
-            "Приглашай друзей и получай *+2 поиска* за каждого, кто подпишется на каналы и начнёт использовать бота по твоей ссылке! 🚀\n"
-            f"Твоя реферальная ссылка: `{referral_link}`\n"
-            "Скопируй её и отправь друзьям! 😎\n\n"
-            f"👥 *Количество добавленных пользователей*: *{invited_users}*\n"
-            f"🔍 *Количество оставшихся запросов*: *{search_queries}*"
-        )
-        await send_message_with_retry(update.message, referral_text, reply_markup=get_main_keyboard())
-    elif text == "❓ Как работает бот":
-        how_it_works_text = (
-            "🎬 *Как работает наш кино-бот?* 🎥\n\n"
-            "Я — твой личный помощник в мире кино! 🍿 Моя главная задача — помочь тебе найти фильмы по секретным числовым кодам. Вот как это работает:\n\n"
-            "🔍 *Поиск фильмов*:\n"
-            "1. Нажми на кнопку *🔍 Поиск фильма* в меню.\n"
-            "2. Подпишись на наши крутые спонсорские каналы (это обязательно! 😎).\n"
-            "3. Введи *числовой код* фильма (только цифры!).\n"
-            "4. Я найду фильм в нашей базе и покажу его название! 🎉\n\n"
-            "👥 *Реферальная система*:\n"
-            "- У тебя есть *5 бесплатных поисков* при старте! 🚀\n"
-            "- Приглашай друзей в бота, и за каждого, кто подпишется на каналы, ты получишь *+2 поиска*! 🌟\n"
-            "- Если поиски закончились, приглашай друзей, чтобы продолжить! 😍\n\n"
-            "❗ *Важно*:\n"
-            "- Подписка на каналы обязательна для доступа к поиску.\n"
-            "- Вводи только числовые коды после нажатия *🔍 Поиск фильма*.\n"
-            "- Если что-то пошло не так, просто следуй подсказкам, и я помогу! 😊\n\n"
-            "Готов к кино-приключению? Выбери действие в меню! 👇"
-        )
-        await send_message_with_retry(update.message, how_it_works_text, reply_markup=get_main_keyboard())
-    else:
-        logger.info(f"User {user_id} sent unknown command: {text}")
-        await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню ниже! 👇", reply_markup=get_main_keyboard())
+        if text == "🔍 Поиск фильма":
+            if not context.user_data.get('subscription_confirmed', False):
+                logger.info(f"User {user_id} pressed Search without subscription.")
+                await prompt_subscribe(update, context)
+                return
+            context.user_data['awaiting_code'] = True
+            await send_message_with_retry(update.message, "Отлично! 😎 Введи *числовой код* фильма, и я найду его для тебя! 🍿")
+        elif text == "👥 Реферальная система":
+            if not context.user_data.get('subscription_confirmed', False):
+                logger.info(f"User {user_id} pressed Referral without subscription.")
+                await prompt_subscribe(update, context)
+                return
+            user_data = get_user_data(user_id)
+            if not user_data:
+                logger.error(f"User {user_id} not found in Users sheet.")
+                await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота или напиши в поддержку.", reply_markup=get_main_keyboard())
+                return
+            referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
+            logger.info(f"Generated referral link for user {user_id}: {referral_link}")
+            invited_users = user_data.get("invited_users", "0")
+            search_queries = user_data.get("search_queries", "0")
+            referral_text = (
+                "🔥 *Реферальная система* 🔥\n\n"
+                "Приглашай друзей и получай *+2 поиска* за каждого, кто подпишется на каналы и начнёт использовать бота по твоей ссылке! 🚀\n"
+                f"Твоя реферальная ссылка: [Нажми здесь]({referral_link})\n"
+                "Или скопируй ссылку и отправь друзьям! 😎\n\n"
+                f"👥 *Количество добавленных пользователей*: *{invited_users}*\n"
+                f"🔍 *Количество оставшихся запросов*: *{search_queries}*"
+            )
+            await send_message_with_retry(update.message, referral_text, reply_markup=get_main_keyboard())
+        elif text == "❓ Как работает бот":
+            how_it_works_text = (
+                "🎬 *Как работает наш кино-бот?* 🎥\n\n"
+                "Я — твой личный помощник в мире кино! 🍿 Моя главная задача — помочь тебе найти фильмы по секретным числовым кодам. Вот как это работает:\n\n"
+                "🔍 *Поиск фильмов*:\n"
+                "1. Нажми на кнопку *🔍 Поиск фильма* в меню.\n"
+                "2. Подпишись на наши крутые спонсорские каналы (это обязательно! 😎).\n"
+                "3. Введи *числовой код* фильма (только цифры!).\n"
+                "4. Я найду фильм в нашей базе и покажу его название! 🎉\n\n"
+                "👥 *Реферальная система*:\n"
+                "- У тебя есть *5 бесплатных поисков* при старте! 🚀\n"
+                "- Приглашай друзей в бота, и за каждого, кто подпишется на каналы, ты получишь *+2 поиска*! 🌟\n"
+                "- Если поиски закончились, приглашай друзей, чтобы продолжить! 😍\n\n"
+                "❗ *Важно*:\n"
+                "- Подписка на каналы обязательна для доступа к поиску.\n"
+                "- Вводи только числовые коды после нажатия *🔍 Поиск фильма*.\n"
+                "- Если что-то пошло не так, просто следуй подсказкам, и я помогу! 😊\n\n"
+                "Готов к кино-приключению? Выбери действие в меню! 👇"
+            )
+            await send_message_with_retry(update.message, how_it_works_text, reply_markup=get_main_keyboard())
+        else:
+            logger.info(f"User {user_id} sent unknown command: {text}")
+            await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню ниже! 👇", reply_markup=get_main_keyboard())
+    elif update.channel_post:  # Игнорируем обновления от каналов
+        logger.warning("Ignoring channel post update")
+        return
 
 async def handle_non_button_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle non-button text input."""
-    if update.message.from_user.id == context.bot.id:
+    if update.message.from_user.id == context.bot["id"]:
         return
     logger.info(f"User {update.message.from_user.id} sent non-button text: {update.message.text}")
-    await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню ниже! 👇", reply_markup=get_main_keyboard())
+    await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню! 👇", reply_markup=get_main_keyboard())
 
 # Webhook endpoint
 async def webhook_endpoint(request):
