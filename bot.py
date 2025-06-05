@@ -61,10 +61,6 @@ if not TOKEN:
 if not BOT_USERNAME:
     logger.error("BOT_USERNAME is not set!")
     raise ValueError("BOT_USERNAME is not set!")
-# Ensure BOT_USERNAME starts with @
-if not BOT_USERNAME.startswith("@"):
-    BOT_USERNAME = f"@{BOT_USERNAME}"
-    logger.info(f"Added '@' to BOT_USERNAME: {BOT_USERNAME}")
 
 # Initialize Google Sheets
 movie_sheet = None
