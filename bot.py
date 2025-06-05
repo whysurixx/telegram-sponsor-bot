@@ -96,42 +96,42 @@ try:
     client = None  # Will be initialized in startup
 
     async def initialize_sheets():
-    global client, movie_sheet, user_sheet, join_requests_sheet
-    
-    # Create an AsyncioGspreadClientManager to handle credentials
-    async def get_creds():
-        return creds  # Return the credentials object created earlier
-    
-    client_manager = gspread.AsyncioGspreadClientManager(get_creds)
-    
-    # Get an async client
-    client = await client_manager.authorize()
-    logger.info("Google Sheets client initialized.")
-    
-    # Movie sheet
-    movie_spreadsheet = await client.open_by_key(MOVIE_SHEET_ID)
-    movie_sheet = await movie_spreadsheet.get_worksheet(0)  # sheet1 is the first worksheet
-    logger.info(f"Movie sheet initialized (ID: {MOVIE_SHEET_ID}).")
-    
-    # User sheet
-    user_spreadsheet = await client.open_by_key(USER_SHEET_ID)
-    try:
-        user_sheet = await user_spreadsheet.worksheet("Users")
-    except gspread.exceptions.WorksheetNotFound:
-        user_sheet = await user_spreadsheet.add_worksheet(title="Users", rows=1000, cols=6)
-        await user_sheet.append_row(["user_id", "username", "first_name", "search_queries", "invited_users", "subscribed"])
-        logger.info(f"Created new 'Users' worksheet (ID: {USER_SHEET_ID}).")
-    logger.info(f"User sheet initialized (ID: {USER_SHEET_ID}).")
-    
-    # Join Requests sheet
-    join_requests_spreadsheet = await client.open_by_key(JOIN_REQUESTS_SHEET_ID)
-    try:
-        join_requests_sheet = await join_requests_spreadsheet.worksheet("JoinRequests")
-    except gspread.exceptions.WorksheetNotFound:
-        join_requests_sheet = await join_requests_spreadsheet.add_worksheet(title="JoinRequests", rows=1000, cols=2)
-        await join_requests_sheet.append_row(["user_id", "channel_id"])
-        logger.info(f"Created new 'JoinRequests' worksheet (ID: {JOIN_REQUESTS_SHEET_ID}).")
-    logger.info(f"Join Requests sheet initialized (ID: {JOIN_REQUESTS_SHEET_ID}).")
+        global client, movie_sheet, user_sheet, join_requests_sheet
+        
+        # Create an AsyncioGspreadClientManager to handle credentials
+        async def get_creds():
+            return creds  # Return the credentials object created earlier
+        
+        client_manager = gspread.AsyncioGspreadClientManager(get_creds)
+        
+        # Get an async client
+        client = await client_manager.authorize()
+        logger.info("Google Sheets client initialized.")
+        
+        # Movie sheet
+        movie_spreadsheet = await client.open_by_key(MOVIE_SHEET_ID)
+        movie_sheet = await movie_spreadsheet.get_worksheet(0)  # sheet1 is the first worksheet
+        logger.info(f"Movie sheet initialized (ID: {MOVIE_SHEET_ID}).")
+        
+        # User sheet
+        user_spreadsheet = await client.open_by_key(USER_SHEET_ID)
+        try:
+            user_sheet = await user_spreadsheet.worksheet("Users")
+        except gspread.exceptions.WorksheetNotFound:
+            user_sheet = await user_spreadsheet.add_worksheet(title="Users", rows=1000, cols=6)
+            await user_sheet.append_row(["user_id", "username", "first_name", "search_queries", "invited_users", "subscribed"])
+            logger.info(f"Created new 'Users' worksheet (ID: {USER_SHEET_ID}).")
+        logger.info(f"User sheet initialized (ID: {USER_SHEET_ID}).")
+        
+        # Join Requests sheet
+        join_requests_spreadsheet = await client.open_by_key(JOIN_REQUESTS_SHEET_ID)
+        try:
+            join_requests_sheet = await join_requests_spreadsheet.worksheet("JoinRequests")
+        except gspread.exceptions.WorksheetNotFound:
+            join_requests_sheet = await join_requests_spreadsheet.add_worksheet(title="JoinRequests", rows=1000, cols=2)
+            await join_requests_sheet.append_row(["user_id", "channel_id"])
+            logger.info(f"Created new 'JoinRequests' worksheet (ID: {JOIN_REQUESTS_SHEET_ID}).")
+        logger.info(f"Join Requests sheet initialized (ID: {JOIN_REQUESTS_SHEET_ID}).")
 
 except Exception as e:
     logger.error(f"Error initializing Google Sheets: {e}")
