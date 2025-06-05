@@ -12,7 +12,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 from telegram.ext import filters
 from telegram.error import RetryAfter
 from google.oauth2.service_account import Credentials
-from gspread_asyncio import AsyncioGspreadClientManager, AsyncioGspreadSpreadsheet
+from gspread_asyncio import AsyncioGspreadClientManager
 from typing import Optional, Dict, List
 import telegram  # Для логирования версии
 
@@ -89,7 +89,7 @@ async def init_google_sheets():
             "https://www.googleapis.com/auth/drive"
         ]
         creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_PATH, scopes=scope)
-        client_manager = AsyncioGspreadClientManager(creds)
+        client_manager = AsyncioGspreadClientManager(lambda: creds)  # Исправление: передаём лямбда-функцию
         client = await client_manager.authorize()  # Получаем клиента
 
         # Movie sheet
@@ -119,8 +119,6 @@ async def init_google_sheets():
     except Exception as e:
         logger.error(f"Error initializing Google Sheets: {e}")
         raise
-
-
 
 async def load_user_cache():
     global USER_DICT
@@ -523,7 +521,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def handle_non_button_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle non-button text input."""
-    if update.message.from_user.id == context.bot["id"]:
+    if update.message.from_user.id == context.bot.id:
         return
     logger.info(f"User {update.message.from_user.id} sent non-button text: {update.message.text}")
     await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню! 👇", reply_markup=get_main_reply_keyboard())
