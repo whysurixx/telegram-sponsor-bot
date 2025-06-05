@@ -443,8 +443,7 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user_data = get_user_data(user_id)
     if not user_data:
         logger.error(f"User {user_id} not found in Users sheet.")
-        await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота
-.", reply_markup=get_main_reply_keyboard())
+        await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота.", reply_markup=get_main_reply_keyboard())
         return
     search_queries = int(user_data.get("search_queries", 0))
     if search_queries <= 0:
