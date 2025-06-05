@@ -12,7 +12,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 from telegram.ext import filters
 from telegram.error import RetryAfter
 from google.oauth2.service_account import Credentials
-from gspread_asyncio import AsyncClient, AsyncSpreadsheet
+from gspread_asyncio import AsyncioGspreadClientManager, AsyncioGspreadSpreadsheet
 from typing import Optional, Dict, List
 import telegram  # Для логирования версии
 
@@ -89,35 +89,36 @@ async def init_google_sheets():
             "https://www.googleapis.com/auth/drive"
         ]
         creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_PATH, scopes=scope)
-        client = AsyncClient(creds)
-        
-        # Movie sheet
-        movie_spreadsheet = await client.open_by_key(MOVIE_SHEET_ID)
-        movie_sheet = await movie_spreadsheet.get_worksheet(0)
-        logger.info(f"Movie sheet initialized (ID: {MOVIE_SHEET_ID}).")
-        
-        # User sheet
-        user_spreadsheet = await client.open_by_key(USER_SHEET_ID)
-        try:
-            user_sheet = await user_spreadsheet.worksheet("Users")
-        except Exception:
-            user_sheet = await user_spreadsheet.add_worksheet(title="Users", rows=1000, cols=5)
-            await user_sheet.append_row(["user_id", "username", "first_name", "search_queries", "invited_users"])
-            logger.info(f"Created new 'Users' worksheet (ID: {USER_SHEET_ID}).")
-        logger.info(f"User sheet initialized (ID: {USER_SHEET_ID}).")
-        
-        # Join Requests sheet
-        join_requests_spreadsheet = await client.open_by_key(JOIN_REQUESTS_SHEET_ID)
-        try:
-            join_requests_sheet = await join_requests_spreadsheet.worksheet("JoinRequests")
-        except Exception:
-            join_requests_sheet = await join_requests_spreadsheet.add_worksheet(title="JoinRequests", rows=1000, cols=2)
-            await join_requests_sheet.append_row(["user_id", "channel_id"])
-            logger.info(f"Created new 'JoinRequests' worksheet (ID: {JOIN_REQUESTS_SHEET_ID}).")
-        logger.info(f"Join Requests sheet initialized (ID: {JOIN_REQUESTS_SHEET_ID}).")
+        client_manager = AsyncioGspreadClientManager(creds)
+        async with client_manager as client:
+            # Movie sheet
+            movie_spreadsheet = await client.open_by_key(MOVIE_SHEET_ID)
+            movie_sheet = await movie_spreadsheet.get_worksheet(0)
+            logger.info(f"Movie sheet initialized (ID: {MOVIE_SHEET_ID}).")
+            
+            # User sheet
+            user_spreadsheet = await client.open_by_key(USER_SHEET_ID)
+            try:
+                user_sheet = await user_spreadsheet.worksheet("Users")
+            except Exception:
+                user_sheet = await user_spreadsheet.add_worksheet(title="Users", rows=1000, cols=5)
+                await user_sheet.append_row(["user_id", "username", "first_name", "search_queries", "invited_users"])
+                logger.info(f"Created new 'Users' worksheet (ID: {USER_SHEET_ID}).")
+            logger.info(f"User sheet initialized (ID: {USER_SHEET_ID}).")
+            
+            # Join Requests sheet
+            join_requests_spreadsheet = await client.open_by_key(JOIN_REQUESTS_SHEET_ID)
+            try:
+                join_requests_sheet = await join_requests_spreadsheet.worksheet("JoinRequests")
+            except Exception:
+                join_requests_sheet = await join_requests_spreadsheet.add_worksheet(title="JoinRequests", rows=1000, cols=2)
+                await join_requests_sheet.append_row(["user_id", "channel_id"])
+                logger.info(f"Created new 'JoinRequests' worksheet (ID: {JOIN_REQUESTS_SHEET_ID}).")
+            logger.info(f"Join Requests sheet initialized (ID: {JOIN_REQUESTS_SHEET_ID}).")
     except Exception as e:
         logger.error(f"Error initializing Google Sheets: {e}")
         raise
+
 
 async def load_user_cache():
     global USER_DICT
