@@ -26,6 +26,11 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
 GOOGLE_CREDENTIALS_PATH = "/etc/secrets/GOOGLE_CREDENTIALS"
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
+
+if BOT_USERNAME.startswith("@"):
+    BOT_USERNAME = BOT_USERNAME[1:]
+    logger.info(f"Removed '@' from BOT_USERNAME: {BOT_USERNAME}")
+
 MOVIE_SHEET_ID = "1hmm-rfUlDcA31QD04XRXIyaa_EpN8ObuHFc8cp7Rwms"
 USER_SHEET_ID = "1XYFfqmC5boLBB8HjjkyKA6AyN3WNCKy6U8LEmN8KvrA"
 
