@@ -17,7 +17,7 @@ from typing import Optional, Dict, List
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.WARNING  # Reduced logging level for performance
+    level=logging.WARNING
 )
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
-GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS")
+GOOGLE_CREDENTIALS_PATH = "/etc/secrets/GOOGLE_CREDENTIALS"
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "").lstrip("@")
 
 # Load channels and buttons
@@ -40,24 +40,27 @@ except (json.JSONDecodeError, ValueError) as e:
     raise
 
 # Validate environment variables
-if not all([WEBHOOK_URL, TOKEN, BOT_USERNAME, GOOGLE_CREDENTIALS_JSON]):
+if not all([WEBHOOK_URL, TOKEN, BOT_USERNAME]):
     logger.error("Missing required environment variables!")
-    raise ValueError("BOT_TOKEN, WEBHOOK_URL, BOT_USERNAME, and GOOGLE_CREDENTIALS must be set!")
+    raise ValueError("BOT_TOKEN, WEBHOOK_URL, and BOT_USERNAME must be set!")
 
 # Initialize Google Sheets
 movie_sheet = None
 user_sheet = None
 join_requests_sheet = None
-MOVIE_DICT = {}  # Cache for movie data
-USER_CACHE = {}  # Cache for user data
-JOIN_REQUESTS_CACHE = set()  # Cache for join requests
-PENDING_USER_UPDATES = []  # Queue for batch updates
-PENDING_JOIN_REQUESTS = []  # Queue for batch join request updates
+MOVIE_DICT = {}
+USER_CACHE = {}
+JOIN_REQUESTS_CACHE = set()
+PENDING_USER_UPDATES = []
+PENDING_JOIN_REQUESTS = []
 
 try:
-    creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+    if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
+        logger.error(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
+        raise FileNotFoundError(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
+
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_PATH, scopes=scope)
     client = gspread.authorize(creds)
     
     movie_spreadsheet = client.open_by_key("1hmm-rfUlDcA31QD04XRXIyaa_EpN8ObuHFc8cp7Rwms")
@@ -80,10 +83,10 @@ except Exception as e:
     logger.error(f"Error initializing Google Sheets: {e}")
     raise
 
-# Initialize Telegram application with optimized settings
+# Initialize Telegram application
 application_tg = Application.builder().token(TOKEN).concurrent_updates(True).rate_limiter(True).connection_pool_size(50).build()
 
-# Predefined constants
+# Constants
 POSITIVE_EMOJIS = ['😍', '🎉', '😎', '👍', '🔥', '😊', '😁', '⭐']
 MAIN_KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("🔍 Поиск фильма"), KeyboardButton("👥 Реферальная система")],
@@ -93,7 +96,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup([
 # Cache sync and batch updates
 async def sync_cache_periodically():
     while True:
-        await asyncio.sleep(180)  # Sync every 3 minutes for better performance
+        await asyncio.sleep(180)
         try:
             global USER_CACHE, JOIN_REQUESTS_CACHE
             if user_sheet:
@@ -117,7 +120,7 @@ async def sync_cache_periodically():
 
 async def batch_sync_to_sheets():
     while True:
-        await asyncio.sleep(30)  # Sync every 30 seconds for faster updates
+        await asyncio.sleep(30)
         try:
             if PENDING_USER_UPDATES and user_sheet:
                 user_sheet.batch_update(PENDING_USER_UPDATES)
