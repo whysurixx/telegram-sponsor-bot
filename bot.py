@@ -7,7 +7,7 @@ import asyncio
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.responses import PlainTextResponse
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ChatJoinRequestHandler, ContextTypes
 from telegram.ext import filters
 from telegram.error import RetryAfter
@@ -106,7 +106,7 @@ try:
     try:
         join_requests_sheet = join_requests_spreadsheet.worksheet("JoinRequests")
     except gspread.exceptions.WorksheetNotFound:
-        join_requests_sheet = join_requests_spreadsheet.add_worksheet(title="JoinRequests", rows=1000, cols=2)
+        join_requests-sheet = join_requests_spreadsheet.add_worksheet(title="JoinRequests", rows=1000, cols=2)
         join_requests_sheet.append_row(["user_id", "channel_id"])
         logger.info(f"Created new 'JoinRequests' worksheet (ID: {JOIN_REQUESTS_SHEET_ID}).")
     logger.info(f"Join Requests sheet initialized (ID: {JOIN_REQUESTS_SHEET_ID}).")
@@ -120,14 +120,13 @@ application_tg = Application.builder().token(TOKEN).build()
 # Random emojis for responses
 POSITIVE_EMOJIS = ['😍', '🎉', '😎', '👍', '🔥', '😊', '😁', '⭐']
 
-# Custom inline keyboard
-def get_main_inline_keyboard():
+# Custom reply keyboard
+def get_main_reply_keyboard():
     keyboard = [
-        [InlineKeyboardButton("🔍 Поиск фильма", callback_data="search_movie")],
-        [InlineKeyboardButton("👥 Реферальная система", callback_data="referral_system")],
-        [InlineKeyboardButton("❓ Как работает бот", callback_data="how_it_works")]
+        [KeyboardButton("🔍 Поиск фильма"), KeyboardButton("👥 Реферальная система")],
+        [KeyboardButton("❓ Как работает бот")]
     ]
-    return InlineKeyboardMarkup(keyboard)
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /start command, including referral links."""
@@ -144,7 +143,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             referrer_id = int(update.message.text.split("invite_")[1])
             if referrer_id == user_id:
                 logger.info(f"User {user_id} tried to invite themselves.")
-                await send_message_with_retry(update.message, "❌ Вы не можете пригласить себя!", reply_markup=get_main_inline_keyboard())
+                await send_message_with_retry(update.message, "❌ Вы не можете пригласить себя!", reply_markup=get_main_reply_keyboard())
                 return
             else:
                 logger.info(f"Referral detected for user {user_id} from referrer {referrer_id}")
@@ -167,13 +166,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     welcome_text = (
         "Привет, *киноман*! 🎬\n"
+ memos/2025-06-05-22-26-05.txt
         "Добро пожаловать в твой личный кино-гид! 🍿 Я помогу найти фильмы по секретным кодам и открою мир кино! 🚀\n"
         f"{'Ты был приглашён другом! 😎 ' if referrer_id else ''}"
         "Выбери действие в меню ниже, и начнём приключение! 😎"
     )
-    await send_message_with_retry(update.message, welcome_text, reply_markup=get_main_inline_keyboard())
+    await send_message_with_retry(update.message, welcome_text, reply_markup=get_main_reply_keyboard())
 
-async def send_message_with_retry(message, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
+async def send_message_with_retry(message, text: str, reply_markup=None) -> None:
     """Send a message with retry on flood control."""
     try:
         await message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
@@ -181,7 +181,7 @@ async def send_message_with_retry(message, text: str, reply_markup: Optional[Inl
         logger.warning(f"Flood control triggered: {e}. Waiting {e.retry_after} seconds.")
         time.sleep(e.retry_after)
         await message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
-    except Exception as e:
+    except Exception as-standard
         logger.error(f"Failed to send message: {e}, Response: {e.__dict__}")
 
 async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
@@ -221,7 +221,7 @@ async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, m
     if message_id:
         await edit_message_with_retry(context, update.effective_chat.id, message_id, promo_text, reply_markup)
     else:
-        await send_message_with_retry(update.message, promo_text, reply_markup)
+        await send_message_with_retry(update.message, promo_text, reply_markup=reply_markup)
 
 def has_sent_join_request(user_id: int, channel_id: int) -> bool:
     """Check if user has sent a join request to the channel."""
@@ -297,7 +297,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "Вы подписаны на все каналы или отправили заявки! 😍 Теперь ты можешь продолжить работать с ботом!\n"
             f"{'Введи *числовой код* для поиска фильма! 🍿' if context.user_data.get('awaiting_code', False) else 'Выбери действие в меню ниже! 😎'}"
         )
-        reply_markup = get_main_inline_keyboard() if not context.user_data.get('awaiting_code', False) else None
+        reply_markup = get_main_reply_keyboard() if not context.user_data.get('awaiting_code', False) else ReplyKeyboardRemove()
 
         await asyncio.sleep(0.5)
         await edit_message_with_retry(
@@ -305,8 +305,14 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             query.message.chat_id,
             query.message.message_id,
             success_text,
-            reply_markup=reply_markup
+            reply_markup=None  # Inline keyboard not needed here
         )
+        if not context.user_data.get('awaiting_code', False):
+            await send_message_with_retry(
+                query.message,
+                "Что дальше? 😎",
+                reply_markup=reply_markup
+            )
     else:
         logger.info(f"User {user_id} is not subscribed to some channels.")
         promo_text = (
@@ -322,88 +328,6 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             query.message.message_id,
             promo_text,
             reply_markup=reply_markup
-        )
-
-async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle inline button presses."""
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    data = query.data
-
-    if data == "search_movie":
-        if not context.user_data.get('subscription_confirmed', False):
-            logger.info(f"User {user_id} pressed Search without subscription.")
-            await prompt_subscribe(update, context, query.message.message_id)
-            return
-        context.user_data['awaiting_code'] = True
-        await edit_message_with_retry(
-            context,
-            query.message.chat_id,
-            query.message.message_id,
-            "Отлично! 😎 Введи *числовой код* фильма, и я найду его для тебя! 🍿",
-            reply_markup=None
-        )
-    elif data == "referral_system":
-        if not context.user_data.get('subscription_confirmed', False):
-            logger.info(f"User {user_id} pressed Referral without subscription.")
-            await prompt_subscribe(update, context, query.message.message_id)
-            return
-        user_data = get_user_data(user_id)
-        if not user_data:
-            logger.error(f"User {user_id} not found in Users sheet.")
-            await edit_message_with_retry(
-                context,
-                query.message.chat_id,
-                query.message.message_id,
-                "Упс, не удалось получить твои данные! 😢 Перезапусти бота или напиши в поддержку.",
-                reply_markup=get_main_inline_keyboard()
-            )
-            return
-        referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
-        logger.info(f"Generated referral link for user {user_id}: {referral_link}")
-        invited_users = user_data.get("invited_users", "0")
-        search_queries = user_data.get("search_queries", "0")
-        referral_text = (
-            "🔥 *Реферальная система* 🔥\n\n"
-            "Приглашай друзей и получай *+2 поиска* за каждого, кто перейдёт по твоей ссылке и подпишется на наши каналы! 🚀\n\n"
-            f"Твоя реферальная ссылка: `{referral_link}`\n"
-            "Нажми на ссылку выше, чтобы скопировать её, и отправь друзьям! 😎\n\n"
-            f"👥 *Количество добавленных пользователей*: *{invited_users}*\n"
-            f"🔍 *Количество оставшихся запросов*: *{search_queries}*"
-        )
-        await edit_message_with_retry(
-            context,
-            query.message.chat_id,
-            query.message.message_id,
-            referral_text,
-            reply_markup=get_main_inline_keyboard()
-        )
-    elif data == "how_it_works":
-        how_it_works_text = (
-            "🎬 *Как работает наш кино-бот?* 🎥\n\n"
-            "Я — твой личный помощник в мире кино! 🍿 Моя главная задача — помочь тебе найти фильмы по секретным числовым кодам. Вот как это работает:\n\n"
-            "🔍 *Поиск фильмов*:\n"
-            "1. Нажми на кнопку *🔍 Поиск фильма* в меню.\n"
-            "2. Подпишись на наши крутые спонсорские каналы или отправь заявку на вступление (это обязательно! 😎).\n"
-            "3. Введи *числовой код* фильма (только цифры!).\n"
-            "4. Я найду фильм в нашей базе и покажу его название! 🎉\n\n"
-            "👥 *Реферальная система*:\n"
-            "- У тебя есть *5 бесплатных поисков* при старте! 🚀\n"
-            "- Приглашай друзей в бота, и за каждого, кто подпишется на каналы, ты получишь *+2 поиска*! 🌟\n"
-            "- Если поиски закончились, приглашай друзей, чтобы продолжить! 😍\n\n"
-            "❗ *Важно*:\n"
-            "- Подписка или заявка на вступление в каналы обязательна для доступа к поиску.\n"
-            "- Вводи только числовые коды после нажатия *🔍 Поиск фильма*.\n"
-            "- Если что-то пошло не так, просто следуй подсказкам, и я помогу! 😊\n\n"
-            "Готов к кино-приключению? Выбери действие в меню! 👇"
-        )
-        await edit_message_with_retry(
-            context,
-            query.message.chat_id,
-            query.message.message_id,
-            how_it_works_text,
-            reply_markup=get_main_inline_keyboard()
         )
 
 def get_user_data(user_id: int) -> Optional[Dict[str, str]]:
@@ -508,19 +432,19 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if not context.user_data.get('awaiting_code', False):
         logger.info(f"User {user_id} sent code without activating search mode.")
-        await send_message_with_retry(update.message, "Эй, *киноман*! 😅 Сначала нажми *🔍 Поиск фильма*, а потом введи код! 🍿", reply_markup=get_main_inline_keyboard())
+        await send_message_with_retry(update.message, "Эй, *киноман*! 😅 Сначала нажми *🔍 Поиск фильма*, а потом введи код! 🍿", reply_markup=get_main_reply_keyboard())
         return
 
     if not code.isdigit():
         logger.info(f"User {user_id} entered non-numeric code: {code}")
-        await send_message_with_retry(update.message, "Ой, нужен *только числовой код*! 😊 Введи цифры, и мы найдём твой фильм! 🔢")
+        await send_message_with_retry(update.message, "Ой, нужен *только числовой код*! 😊 Введи цифры, и мы найдём твой фильм! 🔢", reply_markup=ReplyKeyboardRemove())
         return
 
     # Check search queries
     user_data = get_user_data(user_id)
     if not user_data:
         logger.error(f"User {user_id} not found in Users sheet.")
-        await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота или напиши в поддержку.", reply_markup=get_main_inline_keyboard())
+        await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота или напиши в поддержку.", reply_markup=get_main_reply_keyboard())
         return
     search_queries = int(user_data.get("search_queries", 0))
     if search_queries <= 0:
@@ -528,7 +452,7 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await send_message_with_retry(
             update.message,
             "Ой, у тебя закончились поиски! 😕 Приглашай друзей через *👥 Реферальная система* и получай +2 поиска за каждого! 🚀",
-            reply_markup=get_main_inline_keyboard()
+            reply_markup=get_main_reply_keyboard()
         )
         context.user_data['awaiting_code'] = False
         return
@@ -546,10 +470,10 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
     else:
         result_text = f"Упс, фильм с кодом *{code}* не найден! 😢 Проверь код или попробуй другой! 🔍"
-    await send_message_with_retry(update.message, result_text, reply_markup=get_main_inline_keyboard())
+    await send_message_with_retry(update.message, result_text, reply_markup=get_main_reply_keyboard())
 
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle custom button presses."""
+    """Handle custom button presses from reply keyboard."""
     if update.message and update.message.from_user:
         user_id = update.message.from_user.id
         text = update.message.text
@@ -560,7 +484,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await prompt_subscribe(update, context)
                 return
             context.user_data['awaiting_code'] = True
-            await send_message_with_retry(update.message, "Отлично! 😎 Введи *числовой код* фильма, и я найду его для тебя! 🍿")
+            await send_message_with_retry(update.message, "Отлично! 😎 Введи *числовой код* фильма, и я найду его для тебя! 🍿", reply_markup=ReplyKeyboardRemove())
         elif text == "👥 Реферальная система":
             if not context.user_data.get('subscription_confirmed', False):
                 logger.info(f"User {user_id} pressed Referral without subscription.")
@@ -569,7 +493,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             user_data = get_user_data(user_id)
             if not user_data:
                 logger.error(f"User {user_id} not found in Users sheet.")
-                await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота или напиши в поддержку.", reply_markup=get_main_inline_keyboard())
+                await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота или напиши в поддержку.", reply_markup=get_main_reply_keyboard())
                 return
             referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
             logger.info(f"Generated referral link for user {user_id}: {referral_link}")
@@ -583,7 +507,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"👥 *Количество добавленных пользователей*: *{invited_users}*\n"
                 f"🔍 *Количество оставшихся запросов*: *{search_queries}*"
             )
-            await send_message_with_retry(update.message, referral_text, reply_markup=get_main_inline_keyboard())
+            await send_message_with_retry(update.message, referral_text, reply_markup=get_main_reply_keyboard())
         elif text == "❓ Как работает бот":
             how_it_works_text = (
                 "🎬 *Как работает наш кино-бот?* 🎥\n\n"
@@ -603,10 +527,10 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "- Если что-то пошло не так, просто следуй подсказкам, и я помогу! 😊\n\n"
                 "Готов к кино-приключению? Выбери действие в меню! 👇"
             )
-            await send_message_with_retry(update.message, how_it_works_text, reply_markup=get_main_inline_keyboard())
+            await send_message_with_retry(update.message, how_it_works_text, reply_markup=get_main_reply_keyboard())
         else:
             logger.info(f"User {user_id} sent unknown command: {text}")
-            await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню ниже! 👇", reply_markup=get_main_inline_keyboard())
+            await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню ниже! 👇", reply_markup=get_main_reply_keyboard())
     elif update.channel_post:
         logger.warning("Ignoring channel post update")
         return
@@ -616,7 +540,7 @@ async def handle_non_button_text(update: Update, context: ContextTypes.DEFAULT_T
     if update.message.from_user.id == context.bot["id"]:
         return
     logger.info(f"User {update.message.from_user.id} sent non-button text: {update.message.text}")
-    await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню! 👇", reply_markup=get_main_inline_keyboard())
+    await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню! 👇", reply_markup=get_main_reply_keyboard())
 
 async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle chat join request updates."""
@@ -638,7 +562,12 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             update.callback_query.message.chat_id,
             update.callback_query.message.message_id,
             "Упс, что-то пошло не так! 😢 Попробуй снова или напиши в поддержку.",
-            reply_markup=get_main_inline_keyboard()
+            reply_markup=None
+        )
+        await send_message_with_retry(
+            update.callback_query.message,
+            "Выбери действие в меню ниже! 😎",
+            reply_markup=get_main_reply_keyboard()
         )
 
 # Webhook endpoint
@@ -669,10 +598,9 @@ app = Starlette(
 async def startup():
     """Initialize the bot and load movie data into cache."""
     # Add handlers
-    application_tg.add_error_handler(error_handler)  # Add error handler
+    application_tg.add_error_handler(error_handler)
     application_tg.add_handler(CommandHandler("start", start))
     application_tg.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
-    application_tg.add_handler(CallbackQueryHandler(handle_inline_buttons, pattern="^(search_movie|referral_system|how_it_works)$"))
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+$'), handle_movie_code))
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^\d+$'), handle_non_button_text))
