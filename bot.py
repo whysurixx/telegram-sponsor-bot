@@ -106,7 +106,7 @@ try:
     try:
         join_requests_sheet = join_requests_spreadsheet.worksheet("JoinRequests")
     except gspread.exceptions.WorksheetNotFound:
-        join_requests-sheet = join_requests_spreadsheet.add_worksheet(title="JoinRequests", rows=1000, cols=2)
+        join_requests_sheet = join_requests_spreadsheet.add_worksheet(title="JoinRequests", rows=1000, cols=2)
         join_requests_sheet.append_row(["user_id", "channel_id"])
         logger.info(f"Created new 'JoinRequests' worksheet (ID: {JOIN_REQUESTS_SHEET_ID}).")
     logger.info(f"Join Requests sheet initialized (ID: {JOIN_REQUESTS_SHEET_ID}).")
@@ -166,7 +166,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     welcome_text = (
         "Привет, *киноман*! 🎬\n"
- memos/2025-06-05-22-26-05.txt
         "Добро пожаловать в твой личный кино-гид! 🍿 Я помогу найти фильмы по секретным кодам и открою мир кино! 🚀\n"
         f"{'Ты был приглашён другом! 😎 ' if referrer_id else ''}"
         "Выбери действие в меню ниже, и начнём приключение! 😎"
@@ -181,7 +180,7 @@ async def send_message_with_retry(message, text: str, reply_markup=None) -> None
         logger.warning(f"Flood control triggered: {e}. Waiting {e.retry_after} seconds.")
         time.sleep(e.retry_after)
         await message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
-    except Exception as-standard
+    except Exception as e:
         logger.error(f"Failed to send message: {e}, Response: {e.__dict__}")
 
 async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
