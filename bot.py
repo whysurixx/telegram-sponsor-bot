@@ -282,7 +282,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 try:
                     await bot.send_message(
                         user_id=referrer_id,
-                        text=f"User {user_id} sent join request to channel {user_id} successfully confirmed subscription. Вам начислено *+2 поиска*!",
+                        text=f"User {user_id} successfully confirmed subscription. Вам начислено *+2 поиска*!",
                         parse_mode='Markdown'
                     )
                     logger.info(f"Sent referral reward notification to referrer {referrer_id}")
@@ -302,7 +302,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await edit_message_with_retry(
             context,
             query.message.chat_id,
-            query.message_id,
+            query.message.message_id,  # Fixed here
             success_text,
             reply_markup=reply_markup
         )
@@ -315,7 +315,14 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard = [[InlineKeyboardButton(btn["text"], url=btn["url"])] for btn in unsubscribed_channels]
         keyboard.append([InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")])
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await edit_message_with_retry(context, query.message.chat_id, query.message_id, promo_text, reply_markup)
+        await edit_message_with_retry(
+            context,
+            query.message.chat_id,
+            query.message.message_id,  # Fixed here
+            promo_text,
+            reply_markup=reply_markup
+        )
+
 
 async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle inline button presses."""
