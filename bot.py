@@ -426,18 +426,18 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 logger.error(f"User {user_id} not found in Users sheet.")
                 await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота или напиши в поддержку.", reply_markup=get_main_keyboard())
                 return
-            referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
-            logger.info(f"Generated referral link for user {user_id}: {referral_link}")
-            invited_users = user_data.get("invited_users", "0")
-            search_queries = user_data.get("search_queries", "0")
+            	referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
+        	logger.info(f"Generated referral link for user {user_id}: {referral_link}")
+        	invited_users = user_data.get("invited_users", "0")
+       	 	search_queries = user_data.get("search_queries", "0")
 		referral_text = (
-            	"🔥 *Реферальная система* 🔥\n\n"
-            	"Приглашай друзей и получай *+2 поиска* за каждого, кто перейдёт по твоей ссылке и подпишется на наши каналы! 🚀\n\n"
-            	f"Твоя реферальная ссылка: `{referral_link}`\n"
-            	"Скопируй её и отправь друзьям! 😎\n\n"
-            	f"👥 *Количество добавленных пользователей*: *{invited_users}*\n"
-            	f"🔍 *Количество оставшихся запросов*: *{search_queries}*"
-       	 	)
+        	"🔥 *Реферальная система* 🔥\n\n"
+        	"Приглашай друзей и получай *+2 поиска* за каждого, кто перейдёт по твоей ссылке и подпишется на наши каналы! 🚀\n\n"
+        	f"Твоя реферальная ссылка: `{referral_link}`\n"
+        	"Скопируй её и отправь друзьям! 😎\n\n"
+        	f"👥 *Количество добавленных пользователей*: *{invited_users}*\n"
+        	f"🔍 *Количество оставшихся запросов*: *{search_queries}*"
+   	 	)
 
             await send_message_with_retry(update.message, referral_text, reply_markup=get_main_keyboard())
         elif text == "❓ Как работает бот":
