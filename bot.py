@@ -1,9 +1,9 @@
 import os
 import logging
 import json
-import time
 import random
 import asyncio
+import traceback
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.responses import PlainTextResponse
@@ -16,6 +16,7 @@ import gspread_asyncio as gspread
 from typing import Optional, Dict, List
 import telegram
 from tenacity import retry, wait_exponential, stop_after_attempt
+from cachetools import TTLCache
 
 # Constants for button texts and callback data
 BUTTON_SEARCH = "🔍 Поиск фильма"
@@ -38,6 +39,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
 GOOGLE_CREDENTIALS_PATH = "/etc/secrets/GOOGLE_CREDENTIALS"
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
+ADMIN_IDS = json.loads(os.environ.get("ADMIN_IDS", "[6231911786]"))  # Your ID as default
 
 if BOT_USERNAME.startswith("@"):
     BOT_USERNAME = BOT_USERNAME[1:]
@@ -80,7 +82,7 @@ movie_sheet = None
 user_sheet = None
 join_requests_sheet = None
 MOVIE_DICT = {}  # Cache for movie data
-USER_CACHE = {}  # Cache for user data
+USER_CACHE = TTLCache(maxsize=1000, ttl=3600)  # Cache for user data, 1000 users, 1 hour TTL
 try:
     if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
         logger.error(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
@@ -171,7 +173,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await add_user(user_id, username, first_name, search_queries=5, invited_users=0, subscribed="False")
             logger.info(f"Added user {user_id} to Users sheet with 5 search queries.")
         except Exception as e:
-            logger.error(f"Failed to add user {user_id} to Users sheet: {e}")
+            logger.error(f"Failed to add user {user_id} to Users sheet: {e}\n{traceback.format_exc()}")
     else:
         await update_user(user_id, username=username, first_name=first_name)
         logger.info(f"Updated existing user {user_id}.")
@@ -190,10 +192,10 @@ async def send_message_with_retry(message, text: str, reply_markup=None) -> None
         await message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
     except RetryAfter as e:
         logger.warning(f"Flood control triggered: {e}. Waiting {e.retry_after} seconds.")
-        time.sleep(e.retry_after)
+        await asyncio.sleep(e.retry_after)
         await message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
     except Exception as e:
-        logger.error(f"Failed to send message: {e}, Response: {e.__dict__}")
+        logger.error(f"Failed to send message: {e}\n{traceback.format_exc()}")
 
 async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
     """Edit a message with retry on flood control."""
@@ -207,7 +209,7 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         )
     except RetryAfter as e:
         logger.warning(f"Flood control triggered: {e}. Waiting {e.retry_after} seconds.")
-        time.sleep(e.retry_after)
+        await asyncio.sleep(e.retry_after)
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
@@ -216,7 +218,7 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
             reply_markup=reply_markup
         )
     except Exception as e:
-        logger.error(f"Failed to edit message: {e}, Response: {e.__dict__}")
+        logger.error(f"Failed to edit message: {e}\n{traceback.format_exc()}")
 
 async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: Optional[int] = None) -> None:
     """Prompt user to subscribe to channels."""
@@ -248,10 +250,10 @@ async def has_sent_join_request(user_id: int, channel_id: int) -> bool:
                 return True
         return False
     except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API error in has_sent_join_request: {e}")
+        logger.error(f"Google Sheets API error in has_sent_join_request: {e}\n{traceback.format_exc()}")
         return False
     except Exception as e:
-        logger.error(f"Unknown error in has_sent_join_request: {e}")
+        logger.error(f"Unknown error in has_sent_join_request: {e}\n{traceback.format_exc()}")
         return False
 
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -268,6 +270,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.info(f"User {user_id} has cached subscription status.")
     else:
         unsubscribed_channels = []
+        api_error = False
         for channel_id, button in zip(CHANNELS, CHANNEL_BUTTONS):
             try:
                 member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
@@ -279,8 +282,12 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     unsubscribed_channels.append(button)
                 await asyncio.sleep(0.1)  # Avoid rate limits
             except Exception as e:
-                logger.error(f"Error checking subscription for channel {channel_id}: {e}")
+                logger.error(f"Error checking subscription for channel {channel_id}: {e}\n{traceback.format_exc()}")
                 unsubscribed_channels.append(button)
+                api_error = True
+
+        if api_error:
+            await send_message_with_retry(query.message, "⚠️ Временная ошибка при проверке подписки. Попробуй позже!")
 
         if not unsubscribed_channels:
             context.user_data['subscription_confirmed'] = True
@@ -308,7 +315,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         )
                         logger.info(f"Sent referral reward notification to referrer {referrer_id}")
                     except Exception as e:
-                        logger.error(f"Failed to send referral reward notification to {referrer_id}: {e}")
+                        logger.error(f"Failed to send referral reward notification to {referrer_id}: {e}\n{traceback.format_exc()}")
 
                     del context.user_data['referrer_id']
 
@@ -378,10 +385,10 @@ async def get_user_data(user_id: int) -> Optional[Dict[str, str]]:
                 return user_data
         return None
     except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API error in get_user_data: {e}")
+        logger.error(f"Google Sheets API error in get_user_data: {e}\n{traceback.format_exc()}")
         return None
     except Exception as e:
-        logger.error(f"Unknown error in get_user_data: {e}")
+        logger.error(f"Unknown error in get_user_data: {e}\n{traceback.format_exc()}")
         return None
 
 @retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3))
@@ -403,9 +410,9 @@ async def add_user(user_id: int, username: str, first_name: str, search_queries:
         }
         logger.info(f"Added user {user_id} to Users sheet with {search_queries} search queries.")
     except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API error in add_user: {e}")
+        logger.error(f"Google Sheets API error in add_user: {e}\n{traceback.format_exc()}")
     except Exception as e:
-        logger.error(f"Unknown error in add_user: {e}")
+        logger.error(f"Unknown error in add_user: {e}\n{traceback.format_exc()}")
 
 @retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3))
 async def update_user(user_id: int, **kwargs) -> None:
@@ -439,9 +446,9 @@ async def update_user(user_id: int, **kwargs) -> None:
             return
         logger.warning(f"User {user_id} not found for update.")
     except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API error in update_user: {e}")
+        logger.error(f"Google Sheets API error in update_user: {e}\n{traceback.format_exc()}")
     except Exception as e:
-        logger.error(f"Unknown error in update_user: {e}")
+        logger.error(f"Unknown error in update_user: {e}\n{traceback.format_exc()}")
 
 @retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3))
 async def add_join_request(user_id: int, channel_id: int) -> None:
@@ -458,9 +465,9 @@ async def add_join_request(user_id: int, channel_id: int) -> None:
         await join_requests_sheet.append_row([str(user_id), str(channel_id)])
         logger.info(f"Added join request for user {user_id} to channel {channel_id}")
     except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API error in add_join_request: {e}")
+        logger.error(f"Google Sheets API error in add_join_request: {e}\n{traceback.format_exc()}")
     except Exception as e:
-        logger.error(f"Unknown error in add_join_request: {e}")
+        logger.error(f"Unknown error in add_join_request: {e}\n{traceback.format_exc()}")
 
 async def cleanup_join_requests():
     """Periodically clean up old join requests."""
@@ -480,12 +487,12 @@ async def cleanup_join_requests():
                 if member.status in ["member", "administrator", "creator"]:
                     rows_to_delete.append(idx)
             except Exception as e:
-                logger.error(f"Error checking membership for user {user_id} in channel {channel_id}: {e}")
+                logger.error(f"Error checking membership for user {user_id} in channel {channel_id}: {e}\n{traceback.format_exc()}")
         for idx in reversed(rows_to_delete):
             await join_requests_sheet.delete_rows(idx)
             logger.info(f"Deleted join request at row {idx}")
     except Exception as e:
-        logger.error(f"Error in cleanup_join_requests: {e}")
+        logger.error(f"Error in cleanup_join_requests: {e}\n{traceback.format_exc()}")
     finally:
         # Schedule next cleanup in 24 hours
         await asyncio.sleep(24 * 3600)
@@ -619,7 +626,7 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle errors gracefully."""
-    logger.error(f"Update {update} caused error: {context.error}")
+    logger.error(f"Update {update} caused error: {context.error}\n{traceback.format_exc()}")
     if update.callback_query:
         await update.callback_query.answer()
         await edit_message_with_retry(
@@ -631,15 +638,14 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         await send_message_with_retry(
             update.callback_query.message,
-            "Выбери действие в меню ниже! 😎",
+            "Выбери действие в меню ниже.",
             reply_markup=get_main_reply_keyboard()
         )
 
 async def reload_movies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reload movie data from Google Sheets into cache."""
     user_id = update.message.from_user.id
-    # Simple admin check (could be enhanced with a list of admin IDs)
-    if user_id not in [123456789]:  # Replace with actual admin ID(s)
+    if user_id not in ADMIN_IDS:
         await send_message_with_retry(update.message, "Упс, эта команда доступна только админам! 😊", reply_markup=get_main_reply_keyboard())
         return
     try:
@@ -650,7 +656,7 @@ async def reload_movies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         logger.info(f"Reloaded {len(MOVIE_DICT)} movies into cache.")
         await send_message_with_retry(update.message, f"Успех! 🎉 Загружено {len(MOVIE_DICT)} фильмов в кэш.", reply_markup=get_main_reply_keyboard())
     except Exception as e:
-        logger.error(f"Error reloading movie data: {e}")
+        logger.error(f"Error reloading movies: {e}\n{traceback.format_exc()}")
         await send_message_with_retry(update.message, "Упс, не удалось перезагрузить данные фильмов! 😢 Попробуй снова.", reply_markup=get_main_reply_keyboard())
 
 # Webhook endpoint
@@ -663,7 +669,7 @@ async def webhook_endpoint(request):
             await application_tg.process_update(update)
         return PlainTextResponse("OK")
     except Exception as e:
-        logger.error(f"Error processing webhook update: {e}")
+        logger.error(f"Error processing webhook update: {e}\n{traceback.format_exc()}")
         return PlainTextResponse("Error", status_code=500)
 
 # Health check endpoint
@@ -679,51 +685,59 @@ app = Starlette(
 )
 
 async def startup():
-    """Initialize the bot and load movie data into cache."""
+    """Configure the application on startup."""
     # Add handlers
-    application_tg.add_error_handler(error_handler)
-    application_tg.add_handler(CommandHandler("start", start))
-    application_tg.add_handler(CommandHandler("reload_movies", reload_movies))
-    application_tg.add_handler(CallbackQueryHandler(check_subscription, pattern=CALLBACK_CHECK_SUBSCRIPTION))
-    application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+$'), handle_movie_code))
-    application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
-    application_tg.add_handler(ChatJoinRequestHandler(handle_join_request))
+    try:
+        application_tg.add_error_handler(error_handler)
+        application_tg.add_handler(CommandHandler("start", start))
+        application_tg.add_handler(CommandHandler("reload_movies", reload_movies))
+        application_tg.add_handler(CallbackQueryHandler(check_subscription, pattern=CALLBACK_CHECK_SUBSCRIPTION))
+        application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+$'), handle_movie_code))
+        application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
+        application_tg.add_handler(ChatJoinRequestHandler(handle_join_request))
 
-    # Initialize application
-    await application_tg.initialize()
+        # Initialize application
+        await application_tg.initialize()
 
-    # Initialize Google Sheets
-    await initialize_sheets()
+        # Initialize Google Sheets
+        await initialize_sheets()
 
-    # Load movie data into cache
-    global MOVIE_DICT
-    if movie_sheet:
-        try:
+        # Load movie data into cache
+        global MOVIE_DICT
+        if movie_sheet:
             all_values = await movie_sheet.get_all_values()
             all_values = all_values[1:]  # Skip header
-            MOVIE_DICT = {row[0].strip(): row[1].strip() for row in all_values if row and len(row) >= 2}
-            logger.info(f"Loaded {len(MOVIE_DICT)} movies into cache.")
-        except Exception as e:
-            logger.error(f"Error loading movie data into cache: {e}")
+            try:
+                MOVIE_DICT = {row[0].strip(): row[1].strip() for row in all_values if row and len(row) >= 2}
+                logger.info(f"Loaded {len(MOVIE_DICT)} movies into cache.")
+            except Exception as e:
+                logger.error(f"Error loading movie data into cache: {e}\n{traceback.format_exc()}")
 
-    # Start cleanup task
-    asyncio.create_task(cleanup_join_requests())
+        # Start cleanup task
+        asyncio.create_task(cleanup_join_requests())
 
-    # Set webhook
-    full_webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
-    logger.info(f"Setting webhook to: {full_webhook_url}")
-    try:
-        await application_tg.bot.set_webhook(url=full_webhook_url)
+        # Set webhook with retries
+        full_webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
+        logger.info(f"Setting webhook to: {full_webhook_url}")
+
+        @retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3))
+        async def set_webhook():
+            await application_tg.bot.set_webhook(url=full_webhook_url)
+
+        await set_webhook()
         logger.info("Webhook set successfully.")
     except Exception as e:
-        logger.error(f"Failed to set webhook: {e}")
+        logger.error(f"Startup failed: {e}\n{traceback.format_exc()}")
         raise
 
 async def shutdown():
-    """Shut down the application."""
-    await application_tg.stop()
-    await application_tg.shutdown()
-    logger.info("Application shut down successfully.")
+    """Clean up on application shutdown."""
+    try:
+        await application_tg.stop()
+        await application_tg.shutdown()
+        logger.info("Application shutdown completed.")
+    except Exception as e:
+        logger.error(f"Shutdown failed: {e}\n{traceback.format_exc()}")
 
 app.add_event_handler("startup", startup)
 app.add_event_handler("shutdown", shutdown)
