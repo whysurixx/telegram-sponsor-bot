@@ -263,71 +263,65 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             unsubscribed_channels.append(button)
 
     if not unsubscribed_channels:
-        context.user_data['subscription_confirmed'] = True
-        logger.info(f"User {user_id} successfully confirmed subscription for all channels.")
+    context.user_data['subscription_confirmed'] = True
+    logger.info(f"User {user_id} successfully confirmed subscription for all channels.")
 
-        # Process referral reward
-        referrer_id = context.user_data.get('referrer_id')
-        if referrer_id:
-            referrer_data = get_user_data(referrer_id)
-            if referrer_data:
-                new_invited_users = int(referrer_data.get("invited_users", 0)) + 1
-                new_search_queries = int(referrer_data.get("search_queries", "0")) + 2
-                update_user(
-                    user_id=referrer_id,
-                    invited_users=new_invited_users,
-                    search_queries=new_search_queries
-                )
-                logger.info(f"Added 2 search queries to referrer {referrer_id} for inviting user {user_id}")
-                try:
-                    await bot.send_message(
-                        user_id=referrer_id,
-                        text=f"User {user_id} successfully confirmed subscription. Вам начислено *+2 поиска*!",
-                        parse_mode='Markdown'
-                    )
-                    logger.info(f"Sent referral reward notification to referrer {referrer_id}")
-                except Exception as e:
-                    logger.error(f"Failed to send referral reward notification to {referrer_id}: {e}")
-
-                del context.user_data['referrer_id']
-
-        success_text = (
-            "Супер, *ты в деле*! 🎉\n"
-            "Вы подписаны на все каналы или отправили заявки! 😍 Теперь ты можешь продолжить работать с ботом!\n"
-            f"{'Введи *числовой код* для поиска фильма! 🍿' if context.user_data.get('awaiting_code', False) else 'Выбери действие в меню ниже! 😎'}"
-        )
-        reply_markup = get_main_reply_keyboard() if not context.user_data.get('awaiting_code', False) else ReplyKeyboardRemove()
-
-        await asyncio.sleep(0.5)
-        await edit_message_with_retry(
-            context,
-            query.message.chat_id,
-            query.message.message_id,
-            success_text,
-            reply_markup=None  # Inline keyboard not needed here
-        )
-        if not context.user_data.get('awaiting_code', False):
-            await send_message_with_retry(
-                query.message,
-                "Что дальше? 😎",
-                reply_markup=reply_markup
+    # Process referral reward
+    referrer_id = context.user_data.get('referrer_id')
+    if referrer_id:
+        referrer_data = get_user_data(referrer_id)
+        if referrer_data:
+            new_invited_users = int(referrer_data.get("invited_users", 0)) + 1
+            new_search_queries = int(referrer_data.get("search_queries", "0")) + 2
+            update_user(
+                user_id=referrer_id,
+                invited_users=new_invited_users,
+                search_queries=new_search_queries
             )
-    else:
-        logger.info(f"User {user_id} is not subscribed to some channels.")
-        promo_text = (
-            "Ой-ой! 😜 Похоже, ты пропустил пару каналов! 🚨\n"
-            "Подпишись или отправь заявку на вступление на все каналы ниже и снова нажми *Я ПОДПИСАЛСЯ!* 🌟"
-        )
-        keyboard = [[InlineKeyboardButton(btn["text"], url=btn["url"])] for btn in unsubscribed_channels]
-        keyboard.append([InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await edit_message_with_retry(
-            context,
-            query.message.chat_id,
-            query.message.message_id,
-            promo_text,
-            reply_markup=reply_markup
-        )
+            logger.info(f"Added 2 search queries to referrer {referrer_id} for inviting user {user_id}")
+            try:
+                await bot.send_message(
+                    user_id=referrer_id,
+                    text=f"User {user_id} successfully confirmed subscription. Вам начислено *+2 поиска*!",
+                    parse_mode='Markdown'
+                )
+                logger.info(f"Sent referral reward notification to referrer {referrer_id}")
+            except Exception as e:
+                logger.error(f"Failed to send referral reward notification to {referrer_id}: {e}")
+
+            del context.user_data['referrer_id']
+
+    success_text = (
+        "Супер, *ты в деле*! 🎉\n"
+        "Вы подписаны на все каналы или отправили заявки! 😍 Теперь ты можешь продолжить работать с ботом!\n"
+        f"{'Введи *числовой код* для поиска фильма! 🍿' if context.user_data.get('awaiting_code', False) else 'Выбери действие в меню ниже! 😎'}"
+    )
+    reply_markup = get_main_reply_keyboard() if not context.user_data.get('awaiting_code', False) else ReplyKeyboardRemove()
+
+    await asyncio.sleep(0.5)
+    await edit_message_with_retry(
+        context,
+        query.message.chat_id,
+        query.message.message_id,
+        success_text,
+        reply_markup=None  # Inline keyboard not needed here
+    )
+else:
+    logger.info(f"User {user_id} is not subscribed to some channels.")
+    promo_text = (
+        "Ой-ой! 😜 Похоже, ты пропустил пару каналов! 🚨\n"
+        "Подпишись или отправь заявку на вступление на все каналы ниже и снова нажми *Я ПОДПИСАЛСЯ!* 🌟"
+    )
+    keyboard = [[InlineKeyboardButton(btn["text"], url=btn["url"])] for btn in unsubscribed_channels]
+    keyboard.append([InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await edit_message_with_retry(
+        context,
+        query.message.chat_id,
+        query.message.message_id,
+        promo_text,
+        reply_markup=reply_markup
+    )
 
 def get_user_data(user_id: int) -> Optional[Dict[str, str]]:
     """Retrieve user data from Users sheet."""
