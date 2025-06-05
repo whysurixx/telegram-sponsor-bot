@@ -56,6 +56,10 @@ if not TOKEN:
 if not BOT_USERNAME:
     logger.error("BOT_USERNAME is not set!")
     raise ValueError("BOT_USERNAME is not set!")
+# Ensure BOT_USERNAME starts with @
+if not BOT_USERNAME.startswith("@"):
+    BOT_USERNAME = f"@{BOT_USERNAME}"
+    logger.info(f"Added '@' to BOT_USERNAME: {BOT_USERNAME}")
 
 # Initialize Google Sheets
 movie_sheet = None
@@ -112,7 +116,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = user.id
     username = user.username or ""
     first_name = user.first_name or ""
-    logger.info(f"User {user_id} {first_name} started the bot.")
+    logger.info(f"User {user_id} {first_name} started the bot with message: {update.message.text}")
 
     # Handle referral
     referrer_id = None
@@ -122,12 +126,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if referrer_id == user_id:
                 logger.info(f"User {user_id} tried to invite themselves.")
                 referrer_id = None
+            else:
+                logger.info(f"Referral detected for user {user_id} from referrer {referrer_id}")
+                context.user_data['referrer_id'] = referrer_id
         except (IndexError, ValueError):
             logger.warning(f"Invalid referral link for user {user_id}: {update.message.text}")
             referrer_id = None
-    if referrer_id:
-        context.user_data['referrer_id'] = referrer_id
-        logger.info(f"Stored referrer_id {referrer_id} for user {user_id}.")
 
     # Register or update user
     user_data = get_user_data(user_id)
@@ -406,6 +410,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота или напиши в поддержку.", reply_markup=get_main_keyboard())
             return
         referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
+        logger.info(f"Generated referral link for user {user_id}: {referral_link}")
         invited_users = user_data.get("invited_users", "0")
         search_queries = user_data.get("search_queries", "0")
         referral_text = (
@@ -454,6 +459,7 @@ async def webhook_endpoint(request):
         body = await request.body()
         update = Update.de_json(json.loads(body.decode()), application_tg.bot)
         if update:
+            logger.info(f"Received update: {update.to_json()}")
             await application_tg.process_update(update)
         return PlainTextResponse("OK")
     except Exception as e:
