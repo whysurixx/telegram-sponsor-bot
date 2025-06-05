@@ -258,6 +258,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 continue
             else:
                 unsubscribed_channels.append(button)
+            await asyncio.sleep(0.1)  # Add 100ms delay to avoid rate limits
         except Exception as e:
             logger.error(f"Error checking subscription for channel {channel_id}: {e}")
             unsubscribed_channels.append(button)
@@ -302,7 +303,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await edit_message_with_retry(
             context,
             query.message.chat_id,
-            query.message.message_id,  # Fixed here
+            query.message.message_id,
             success_text,
             reply_markup=reply_markup
         )
@@ -318,11 +319,10 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await edit_message_with_retry(
             context,
             query.message.chat_id,
-            query.message.message_id,  # Fixed here
+            query.message.message_id,
             promo_text,
             reply_markup=reply_markup
         )
-
 
 async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle inline button presses."""
@@ -340,7 +340,7 @@ async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TY
         await edit_message_with_retry(
             context,
             query.message.chat_id,
-            query.message_id,
+            query.message.message_id,
             "Отлично! 😎 Введи *числовой код* фильма, и я найду его для тебя! 🍿",
             reply_markup=None
         )
@@ -355,7 +355,7 @@ async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TY
             await edit_message_with_retry(
                 context,
                 query.message.chat_id,
-                query.message_id,
+                query.message.message_id,
                 "Упс, не удалось получить твои данные! 😢 Перезапусти бота или напиши в поддержку.",
                 reply_markup=get_main_inline_keyboard()
             )
@@ -375,7 +375,7 @@ async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TY
         await edit_message_with_retry(
             context,
             query.message.chat_id,
-            query.message_id,
+            query.message.message_id,
             referral_text,
             reply_markup=get_main_inline_keyboard()
         )
@@ -401,7 +401,7 @@ async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TY
         await edit_message_with_retry(
             context,
             query.message.chat_id,
-            query.message_id,
+            query.message.message_id,
             how_it_works_text,
             reply_markup=get_main_inline_keyboard()
         )
@@ -628,6 +628,19 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
         add_join_request(user_id, chat_id)
         logger.info(f"User {user_id} sent join request to channel {chat_id}")
 
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle errors gracefully."""
+    logger.error(f"Update {update} caused error: {context.error}")
+    if update.callback_query:
+        await update.callback_query.answer()
+        await edit_message_with_retry(
+            context,
+            update.callback_query.message.chat_id,
+            update.callback_query.message.message_id,
+            "Упс, что-то пошло не так! 😢 Попробуй снова или напиши в поддержку.",
+            reply_markup=get_main_inline_keyboard()
+        )
+
 # Webhook endpoint
 async def webhook_endpoint(request):
     try:
@@ -656,6 +669,7 @@ app = Starlette(
 async def startup():
     """Initialize the bot and load movie data into cache."""
     # Add handlers
+    application_tg.add_error_handler(error_handler)  # Add error handler
     application_tg.add_handler(CommandHandler("start", start))
     application_tg.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
     application_tg.add_handler(CallbackQueryHandler(handle_inline_buttons, pattern="^(search_movie|referral_system|how_it_works)$"))
