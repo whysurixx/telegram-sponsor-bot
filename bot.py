@@ -195,6 +195,13 @@ def get_search_reply_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
+def escape_markdown_v2(text: str) -> str:
+    """Экранирование специальных символов для MarkdownV2."""
+    special_chars = r'_*[]()~`>#+-=|{}.!'
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /start command, including referral links."""
     user = update.message.from_user
@@ -249,6 +256,11 @@ async def send_message_with_retry(message, text: str, reply_markup=None) -> None
         await message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"Failed to send message: {e}, Response: {e.__dict__}")
+        # Попробуем отправить без Markdown
+        try:
+            await message.reply_text(text, reply_markup=reply_markup)
+        except Exception as e2:
+            logger.error(f"Failed to send message without Markdown: {e2}")
 
 async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
     """Edit a message with retry on flood control."""
@@ -272,6 +284,16 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         )
     except Exception as e:
         logger.error(f"Failed to edit message: {e}, Response: {e.__dict__}")
+        # Попробуем редактировать без Markdown
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=reply_markup
+            )
+        except Exception as e2:
+            logger.error(f"Failed to edit message without Markdown: {e2}")
 
 async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: Optional[int] = None) -> None:
     """Prompt user to subscribe to channels."""
@@ -335,7 +357,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 try:
                     await bot.send_message(
                         user_id=referrer_id,
-                        text=f"User {user_id} successfully confirmed subscription. Вам начислено *+2 поиска*!",
+                        text=f"Пользователь {user_id} успешно подтвердил подписку. Вам начислено *+2 поиска*!",
                         parse_mode='Markdown'
                     )
                     logger.info(f"Sent referral reward notification to referrer {referrer_id}")
@@ -346,10 +368,10 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         success_text = (
             "Супер, *ты в деле*! 🎉\n"
-            "Вы подписаны на все каналы или отправили заявки! 😍 Теперь ты можешь продолжить работать с ботом!\n"
-            f"{'Введи *числовой код* для поиска фильма! 🍿' if context.user_data.get('awaiting_code', False) else 'Выбери действие в меню ниже! 😎'}"
+            "Вы подписаны на все каналы или отправили заявки! 😍 Теперь ты можешь искать фильмы!\n"
+            f"{'Введи *числовой код* для поиска фильма! 🍿' if context.user_data.get('awaiting_code', False) else 'Нажми *🔍 Поиск фильма* в меню ниже! 😎'}"
         )
-        reply_markup = get_main_reply_keyboard() if not context.user_data.get('awaiting_code', False) else ReplyKeyboardRemove()
+        reply_markup = get_main_reply_keyboard() if not context.user_data.get('awaiting_code', False) else get_search_reply_keyboard()
 
         await asyncio.sleep(0.5)
         await edit_message_with_retry(
@@ -359,6 +381,13 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             success_text,
             reply_markup=None  # Inline keyboard not needed here
         )
+        # Отправляем основное меню или сохраняем клавиатуру поиска
+        if not context.user_data.get('awaiting_code', False):
+            await send_message_with_retry(
+                query.message,
+                "Выбери действие в меню ниже! 😎",
+                reply_markup=reply_markup
+            )
     else:
         logger.info(f"User {user_id} is not subscribed to some channels.")
         promo_text = (
@@ -501,7 +530,7 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # Decrement search queries
         await update_user(user_id, search_queries=search_queries - 1)
         result_text = (
-            f"*Бинго!* 🎥 Код {code}: *{movie['title']}* {random.choice(POSITIVE_EMOJIS)}\n"
+            f"*Бинго!* 🎥 Код {code}: *{escape_markdown_v2(movie['title'])}* {random.choice(POSITIVE_EMOJIS)}\n"
             f"Осталось поисков: *{search_queries - 1}* 🔍\n"
             "Хочешь найти ещё один шедевр? Нажми *🔍 Поиск фильма*! 🍿"
         )
@@ -524,7 +553,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await send_message_with_retry(
                 update.message,
                 "Отлично! 😎 Введи *числовой код* фильма, и я найду его для тебя! 🍿",
-                reply_markup=get_search_reply_keyboard()  # Use search keyboard with Back button
+                reply_markup=get_search_reply_keyboard()
             )
         elif text == "❌ Назад":
             if context.user_data.get('awaiting_code', False):
@@ -542,10 +571,6 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     reply_markup=get_main_reply_keyboard()
                 )
         elif text == "👥 Реферальная система":
-            if not context.user_data.get('subscription_confirmed', False):
-                logger.info(f"User {user_id} pressed Referral without subscription.")
-                await prompt_subscribe(update, context)
-                return
             user_data = get_user_data(user_id)
             if not user_data:
                 logger.error(f"User {user_id} not found in Users sheet.")
@@ -558,7 +583,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             referral_text = (
                 "🔥 *Реферальная система* 🔥\n\n"
                 "Приглашай друзей и получай *+2 поиска* за каждого, кто перейдёт по твоей ссылке и подпишется на наши каналы! 🚀\n\n"
-                f"Твоя реферальная ссылка: {referral_link}\n"
+                f"Твоя реферальная ссылка: {escape_markdown_v2(referral_link)}\n"
                 "Нажми на ссылку, чтобы поделиться, или скопируй её для друзей! 😎\n\n"
                 f"👥 *Количество добавленных пользователей*: *{invited_users}*\n"
                 f"🔍 *Количество оставшихся запросов*: *{search_queries}*"
@@ -570,7 +595,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "Я — твой личный помощник в мире кино! 🍿 Моя главная задача — помочь тебе найти фильмы по секретным числовым кодам. Вот как это работает:\n\n"
                 "🔍 *Поиск фильмов*:\n"
                 "1. Нажми на кнопку *🔍 Поиск фильма* в меню.\n"
-                "2. Подпишись на наши крутые спонсорские каналы или отправь заявку на вступление (это обязательно! 😎).\n"
+                "2. Подпишись на наши крутые спонсорские каналы или отправь заявку на вступление (это обязательно для поиска! 😎).\n"
                 "3. Введи *числовой код* фильма (только цифры!).\n"
                 "4. Я найду фильм в нашей базе и покажу его название! 🎉\n\n"
                 "👥 *Реферальная система*:\n"
@@ -578,7 +603,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "- Приглашай друзей в бота, и за каждого, кто подпишется на каналы, ты получишь *+2 поиска*! 🌟\n"
                 "- Если поиски закончились, приглашай друзей, чтобы продолжить! 😍\n\n"
                 "❗ *Важно*:\n"
-                "- Подписка или заявка на вступление в каналы обязательна для доступа к поиску.\n"
+                "- Подписка или заявка на вступление в каналы обязательна только для поиска фильмов.\n"
                 "- Вводи только числовые коды после нажатия *🔍 Поиск фильма*.\n"
                 "- Нажми *❌ Назад*, чтобы отменить поиск и вернуться в меню.\n"
                 "- Если что-то пошло не так, просто следуй подсказкам, и я помогу! 😊\n\n"
