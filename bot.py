@@ -34,6 +34,7 @@ if BOT_USERNAME.startswith("@"):
 
 MOVIE_SHEET_ID = "1hmm-rfUlDcA31QD04XRXIyaa_EpN8ObuHFc8cp7Rwms"
 USER_SHEET_ID = "1XYFfqmC5boLBB8HjjkyKA6AyN3WNCKy6U8LEmN8KvrA"
+JOIN_REQUESTS_SHEET_ID = "1OKteXrJFjKC7B2qbwoVkt-rfbkCGdYt2VjMcZRjtQ84"
 
 # Load channels and buttons
 try:
@@ -66,6 +67,7 @@ if not BOT_USERNAME:
 # Initialize Google Sheets
 movie_sheet = None
 user_sheet = None
+join_requests_sheet = None
 MOVIE_DICT = {}  # Cache for movie data
 try:
     if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
@@ -93,6 +95,16 @@ try:
         user_sheet.append_row(["user_id", "username", "first_name", "search_queries", "invited_users"])
         logger.info(f"Created new 'Users' worksheet (ID: {USER_SHEET_ID}).")
     logger.info(f"User sheet initialized (ID: {USER_SHEET_ID}).")
+    
+    # Join Requests sheet
+    join_requests_spreadsheet = client.open_by_key(JOIN_REQUESTS_SHEET_ID)
+    try:
+        join_requests_sheet = join_requests_spreadsheet.worksheet("JoinRequests")
+    except gspread.exceptions.WorksheetNotFound:
+        join_requests_sheet = join_requests_spreadsheet.add_worksheet(title="JoinRequests", rows=1000, cols=2)
+        join_requests_sheet.append_row(["user_id", "channel_id"])
+        logger.info(f"Created new 'JoinRequests' worksheet (ID: {JOIN_REQUESTS_SHEET_ID}).")
+    logger.info(f"Join Requests sheet initialized (ID: {JOIN_REQUESTS_SHEET_ID}).")
 except Exception as e:
     logger.error(f"Error initializing Google Sheets: {e}")
     raise
@@ -195,7 +207,7 @@ async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, m
     promo_text = (
         "Эй, *кинофан*! 🎥\n"
         "Чтобы открыть доступ к фильмам, подпишись на наших крутых спонсоров! 🌟\n"
-        "Кликни на кнопки ниже, подпишись и нажми *Я ПОДПИСАЛСЯ!* 😎"
+        "Кликни на кнопки ниже, подпишись или отправь заявку на вступление и нажми *Я ПОДПИСАЛСЯ!* 😎"
     )
     keyboard = [[InlineKeyboardButton(btn["text"], url=btn["url"])] for btn in CHANNEL_BUTTONS]
     keyboard.append([InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")])
@@ -206,8 +218,26 @@ async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, m
     else:
         await send_message_with_retry(update.message, promo_text, reply_markup)
 
+def has_sent_join_request(user_id: int, channel_id: int) -> bool:
+    """Check if user has sent a join request to the channel."""
+    if join_requests_sheet is None:
+        logger.error("JoinRequests sheet not initialized.")
+        return False
+    try:
+        all_values = join_requests_sheet.get_all_values()[1:]  # Skip header
+        for row in all_values:
+            if row and len(row) >= 2 and row[0] == str(user_id) and row[1] == str(channel_id):
+                return True
+        return False
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error in has_sent_join_request: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unknown error in has_sent_join_request: {e}")
+        return False
+
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Check if the user is subscribed to all required channels and process referrals."""
+    """Check if the user is subscribed to all required channels or has sent join requests."""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -217,7 +247,11 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
     for channel_id, button in zip(CHANNELS, CHANNEL_BUTTONS):
         try:
             member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
-            if member.status not in ["member", "administrator", "creator"]:
+            if member.status in ["member", "administrator", "creator"]:
+                continue  # Subscribed as member
+            elif has_sent_join_request(user_id, channel_id):
+                continue  # Subscribed as having sent join request
+            else:
                 unsubscribed_channels.append(button)
         except Exception as e:
             logger.error(f"Error checking subscription for channel {channel_id}: {e}")
@@ -240,7 +274,6 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     search_queries=new_search_queries
                 )
                 logger.info(f"Added 2 search queries to referrer {referrer_id} for inviting user {user_id}")
-                # Отправляем уведомление рефереру
                 try:
                     await bot.send_message(
                         chat_id=referrer_id,
@@ -255,10 +288,9 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         success_text = (
             "Супер, *ты в деле*! 🎉\n"
-            "Вы подписаны на все каналы! 😍 Теперь ты можешь продолжить работать с ботом!\n"
+            "Вы подписаны на все каналы или отправили заявки! 😍 Теперь ты можешь продолжить работать с ботом!\n"
             f"{'Введи *числовой код* для поиска фильма! 🍿' if context.user_data.get('awaiting_code', False) else 'Выбери действие в меню ниже! 😎'}"
         )
-        # Добавляем небольшую задержку для плавности
         await asyncio.sleep(0.5)
         await edit_message_with_retry(
             context,
@@ -271,7 +303,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.info(f"User {user_id} is not subscribed to some channels.")
         promo_text = (
             "Ой-ой! 😕 Похоже, ты пропустил пару каналов! 🚨\n"
-            "Подпишись на все каналы ниже и снова нажми *Я ПОДПИСАЛСЯ!* 🌟"
+            "Подпишись или отправь заявку на вступление на все каналы ниже и снова нажми *Я ПОДПИСАЛСЯ!* 🌟"
         )
         keyboard = [[InlineKeyboardButton(btn["text"], url=btn["url"])] for btn in unsubscribed_channels]
         keyboard.append([InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")])
@@ -350,6 +382,23 @@ def update_user(user_id: int, **kwargs) -> None:
     except Exception as e:
         logger.error(f"Unknown error in update_user: {e}")
 
+def add_join_request(user_id: int, channel_id: int) -> None:
+    """Add a join request to JoinRequests sheet."""
+    if join_requests_sheet is None:
+        logger.error("JoinRequests sheet not initialized.")
+        return
+    try:
+        all_values = join_requests_sheet.get_all_values()[1:]  # Skip header
+        for row in all_values:
+            if row and len(row) >= 2 and row[0] == str(user_id) and row[1] == str(channel_id):
+                return  # Already exists
+        join_requests_sheet.append_row([str(user_id), str(channel_id)])
+        logger.info(f"Added join request for user {user_id} to channel {channel_id}")
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error in add_join_request: {e}")
+    except Exception as e:
+        logger.error(f"Unknown error in add_join_request: {e}")
+
 def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
     """Find a movie by its code in cached MOVIE_DICT."""
     if code in MOVIE_DICT:
@@ -405,7 +454,6 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle custom button presses."""
-    # Проверяем, что обновление содержит сообщение от пользователя
     if update.message and update.message.from_user:
         user_id = update.message.from_user.id
         text = update.message.text
@@ -446,7 +494,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "Я — твой личный помощник в мире кино! 🍿 Моя главная задача — помочь тебе найти фильмы по секретным числовым кодам. Вот как это работает:\n\n"
                 "🔍 *Поиск фильмов*:\n"
                 "1. Нажми на кнопку *🔍 Поиск фильма* в меню.\n"
-                "2. Подпишись на наши крутые спонсорские каналы (это обязательно! 😎).\n"
+                "2. Подпишись на наши крутые спонсорские каналы или отправь заявку на вступление (это обязательно! 😎).\n"
                 "3. Введи *числовой код* фильма (только цифры!).\n"
                 "4. Я найду фильм в нашей базе и покажу его название! 🎉\n\n"
                 "👥 *Реферальная система*:\n"
@@ -454,7 +502,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "- Приглашай друзей в бота, и за каждого, кто подпишется на каналы, ты получишь *+2 поиска*! 🌟\n"
                 "- Если поиски закончились, приглашай друзей, чтобы продолжить! 😍\n\n"
                 "❗ *Важно*:\n"
-                "- Подписка на каналы обязательна для доступа к поиску.\n"
+                "- Подписка или заявка на вступление в каналы обязательна для доступа к поиску.\n"
                 "- Вводи только числовые коды после нажатия *🔍 Поиск фильма*.\n"
                 "- Если что-то пошло не так, просто следуй подсказкам, и я помогу! 😊\n\n"
                 "Готов к кино-приключению? Выбери действие в меню! 👇"
@@ -463,7 +511,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         else:
             logger.info(f"User {user_id} sent unknown command: {text}")
             await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню ниже! 👇", reply_markup=get_main_keyboard())
-    elif update.channel_post:  # Игнорируем обновления от каналов
+    elif update.channel_post:
         logger.warning("Ignoring channel post update")
         return
 
@@ -473,6 +521,16 @@ async def handle_non_button_text(update: Update, context: ContextTypes.DEFAULT_T
         return
     logger.info(f"User {update.message.from_user.id} sent non-button text: {update.message.text}")
     await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню! 👇", reply_markup=get_main_keyboard())
+
+async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle chat join request updates."""
+    join_request = update.chat_join_request
+    user = join_request.from_user
+    user_id = user.id
+    chat_id = join_request.chat.id
+    if chat_id in CHANNELS:
+        add_join_request(user_id, chat_id)
+        logger.info(f"User {user_id} sent join request to channel {chat_id}")
 
 # Webhook endpoint
 async def webhook_endpoint(request):
@@ -507,6 +565,7 @@ async def startup():
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+$'), handle_movie_code))
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^\d+$'), handle_non_button_text))
+    application_tg.add_handler(MessageHandler(filters.ChatJoinRequest, handle_join_request))
 
     # Initialize application
     await application_tg.initialize()
