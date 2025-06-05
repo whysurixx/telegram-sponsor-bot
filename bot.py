@@ -12,7 +12,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 from telegram.ext import filters
 from telegram.error import RetryAfter
 from google.oauth2.service_account import Credentials
-import gspread
+from gspread_asyncio import AsyncClient, AsyncSpreadsheet
 from typing import Optional, Dict, List
 import telegram  # Для логирования версии
 
@@ -74,45 +74,76 @@ movie_sheet = None
 user_sheet = None
 join_requests_sheet = None
 MOVIE_DICT = {}  # Cache for movie data
-try:
-    if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
-        logger.error(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
-        raise FileNotFoundError(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
+USER_DICT = {}   # Cache for user data
+JOIN_REQUESTS_DICT = {}  # Cache for join requests
 
-    scope = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_PATH, scopes=scope)
-    client = gspread.authorize(creds)
-    
-    # Movie sheet
-    movie_spreadsheet = client.open_by_key(MOVIE_SHEET_ID)
-    movie_sheet = movie_spreadsheet.sheet1
-    logger.info(f"Movie sheet initialized (ID: {MOVIE_SHEET_ID}).")
-    
-    # User sheet
-    user_spreadsheet = client.open_by_key(USER_SHEET_ID)
+async def init_google_sheets():
+    global movie_sheet, user_sheet, join_requests_sheet
     try:
-        user_sheet = user_spreadsheet.worksheet("Users")
-    except gspread.exceptions.WorksheetNotFound:
-        user_sheet = user_spreadsheet.add_worksheet(title="Users", rows=1000, cols=5)
-        user_sheet.append_row(["user_id", "username", "first_name", "search_queries", "invited_users"])
-        logger.info(f"Created new 'Users' worksheet (ID: {USER_SHEET_ID}).")
-    logger.info(f"User sheet initialized (ID: {USER_SHEET_ID}).")
-    
-    # Join Requests sheet
-    join_requests_spreadsheet = client.open_by_key(JOIN_REQUESTS_SHEET_ID)
+        if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
+            logger.error(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
+            raise FileNotFoundError(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
+
+        scope = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_PATH, scopes=scope)
+        client = AsyncClient(creds)
+        
+        # Movie sheet
+        movie_spreadsheet = await client.open_by_key(MOVIE_SHEET_ID)
+        movie_sheet = await movie_spreadsheet.get_worksheet(0)
+        logger.info(f"Movie sheet initialized (ID: {MOVIE_SHEET_ID}).")
+        
+        # User sheet
+        user_spreadsheet = await client.open_by_key(USER_SHEET_ID)
+        try:
+            user_sheet = await user_spreadsheet.worksheet("Users")
+        except Exception:
+            user_sheet = await user_spreadsheet.add_worksheet(title="Users", rows=1000, cols=5)
+            await user_sheet.append_row(["user_id", "username", "first_name", "search_queries", "invited_users"])
+            logger.info(f"Created new 'Users' worksheet (ID: {USER_SHEET_ID}).")
+        logger.info(f"User sheet initialized (ID: {USER_SHEET_ID}).")
+        
+        # Join Requests sheet
+        join_requests_spreadsheet = await client.open_by_key(JOIN_REQUESTS_SHEET_ID)
+        try:
+            join_requests_sheet = await join_requests_spreadsheet.worksheet("JoinRequests")
+        except Exception:
+            join_requests_sheet = await join_requests_spreadsheet.add_worksheet(title="JoinRequests", rows=1000, cols=2)
+            await join_requests_sheet.append_row(["user_id", "channel_id"])
+            logger.info(f"Created new 'JoinRequests' worksheet (ID: {JOIN_REQUESTS_SHEET_ID}).")
+        logger.info(f"Join Requests sheet initialized (ID: {JOIN_REQUESTS_SHEET_ID}).")
+    except Exception as e:
+        logger.error(f"Error initializing Google Sheets: {e}")
+        raise
+
+async def load_user_cache():
+    global USER_DICT
     try:
-        join_requests_sheet = join_requests_spreadsheet.worksheet("JoinRequests")
-    except gspread.exceptions.WorksheetNotFound:
-        join_requests_sheet = join_requests_spreadsheet.add_worksheet(title="JoinRequests", rows=1000, cols=2)
-        join_requests_sheet.append_row(["user_id", "channel_id"])
-        logger.info(f"Created new 'JoinRequests' worksheet (ID: {JOIN_REQUESTS_SHEET_ID}).")
-    logger.info(f"Join Requests sheet initialized (ID: {JOIN_REQUESTS_SHEET_ID}).")
-except Exception as e:
-    logger.error(f"Error initializing Google Sheets: {e}")
-    raise
+        all_values = await user_sheet.get_all_values()
+        USER_DICT = {
+            row[0]: {
+                "user_id": row[0],
+                "username": row[1] if len(row) > 1 else "",
+                "first_name": row[2] if len(row) > 2 else "",
+                "search_queries": row[3] if len(row) > 3 else "0",
+                "invited_users": row[4] if len(row) > 4 else "0"
+            } for row in all_values[1:] if row and len(row) >= 1
+        }
+        logger.info(f"Loaded {len(USER_DICT)} users into cache.")
+    except Exception as e:
+        logger.error(f"Error loading user cache: {e}")
+
+async def load_join_requests_cache():
+    global JOIN_REQUESTS_DICT
+    try:
+        all_values = await join_requests_sheet.get_all_values()
+        JOIN_REQUESTS_DICT = {(row[0], row[1]): True for row in all_values[1:] if row and len(row) >= 2}
+        logger.info(f"Loaded {len(JOIN_REQUESTS_DICT)} join requests into cache.")
+    except Exception as e:
+        logger.error(f"Error loading join requests cache: {e}")
 
 # Initialize Telegram application
 application_tg = Application.builder().token(TOKEN).build()
@@ -156,12 +187,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_data = get_user_data(user_id)
     if not user_data:
         try:
-            add_user(user_id, username, first_name, search_queries=5, invited_users=0)
+            await add_user(user_id, username, first_name, search_queries=5, invited_users=0)
             logger.info(f"Added user {user_id} to Users sheet with 5 search queries.")
         except Exception as e:
             logger.error(f"Failed to add user {user_id} to Users sheet: {e}")
     else:
-        update_user(user_id, username=username, first_name=first_name)
+        await update_user(user_id, username=username, first_name=first_name)
         logger.info(f"Updated existing user {user_id}.")
 
     welcome_text = (
@@ -178,7 +209,7 @@ async def send_message_with_retry(message, text: str, reply_markup=None) -> None
         await message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
     except RetryAfter as e:
         logger.warning(f"Flood control triggered: {e}. Waiting {e.retry_after} seconds.")
-        time.sleep(e.retry_after)
+        await asyncio.sleep(e.retry_after)
         await message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"Failed to send message: {e}, Response: {e.__dict__}")
@@ -195,7 +226,7 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         )
     except RetryAfter as e:
         logger.warning(f"Flood control triggered: {e}. Waiting {e.retry_after} seconds.")
-        time.sleep(e.retry_after)
+        await asyncio.sleep(e.retry_after)
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
@@ -224,21 +255,7 @@ async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, m
 
 def has_sent_join_request(user_id: int, channel_id: int) -> bool:
     """Check if user has sent a join request to the channel."""
-    if join_requests_sheet is None:
-        logger.error("JoinRequests sheet not initialized.")
-        return False
-    try:
-        all_values = join_requests_sheet.get_all_values()[1:]  # Skip header
-        for row in all_values:
-            if row and len(row) >= 2 and row[0] == str(user_id) and row[1] == str(channel_id):
-                return True
-        return False
-    except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API error in has_sent_join_request: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"Unknown error in has_sent_join_request: {e}")
-        return False
+    return (str(user_id), str(channel_id)) in JOIN_REQUESTS_DICT
 
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Check if the user is subscribed to all required channels or has sent join requests."""
@@ -263,113 +280,90 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             unsubscribed_channels.append(button)
 
     if not unsubscribed_channels:
-    context.user_data['subscription_confirmed'] = True
-    logger.info(f"User {user_id} successfully confirmed subscription for all channels.")
+        context.user_data['subscription_confirmed'] = True
+        logger.info(f"User {user_id} successfully confirmed subscription for all channels.")
 
-    # Process referral reward
-    referrer_id = context.user_data.get('referrer_id')
-    if referrer_id:
-        referrer_data = get_user_data(referrer_id)
-        if referrer_data:
-            new_invited_users = int(referrer_data.get("invited_users", 0)) + 1
-            new_search_queries = int(referrer_data.get("search_queries", "0")) + 2
-            update_user(
-                user_id=referrer_id,
-                invited_users=new_invited_users,
-                search_queries=new_search_queries
-            )
-            logger.info(f"Added 2 search queries to referrer {referrer_id} for inviting user {user_id}")
-            try:
-                await bot.send_message(
+        # Process referral reward
+        referrer_id = context.user_data.get('referrer_id')
+        if referrer_id:
+            referrer_data = get_user_data(referrer_id)
+            if referrer_data:
+                new_invited_users = int(referrer_data.get("invited_users", 0)) + 1
+                new_search_queries = int(referrer_data.get("search_queries", "0")) + 2
+                await update_user(
                     user_id=referrer_id,
-                    text=f"User {user_id} successfully confirmed subscription. Вам начислено *+2 поиска*!",
-                    parse_mode='Markdown'
+                    invited_users=new_invited_users,
+                    search_queries=new_search_queries
                 )
-                logger.info(f"Sent referral reward notification to referrer {referrer_id}")
-            except Exception as e:
-                logger.error(f"Failed to send referral reward notification to {referrer_id}: {e}")
+                logger.info(f"Added 2 search queries to referrer {referrer_id} for inviting user {user_id}")
+                try:
+                    await bot.send_message(
+                        user_id=referrer_id,
+                        text=f"User {user_id} successfully confirmed subscription. Вам начислено *+2 поиска*!",
+                        parse_mode='Markdown'
+                    )
+                    logger.info(f"Sent referral reward notification to referrer {referrer_id}")
+                except Exception as e:
+                    logger.error(f"Failed to send referral reward notification to {referrer_id}: {e}")
 
-            del context.user_data['referrer_id']
+                del context.user_data['referrer_id']
 
-    success_text = (
-        "Супер, *ты в деле*! 🎉\n"
-        "Вы подписаны на все каналы или отправили заявки! 😍 Теперь ты можешь продолжить работать с ботом!\n"
-        f"{'Введи *числовой код* для поиска фильма! 🍿' if context.user_data.get('awaiting_code', False) else 'Выбери действие в меню ниже! 😎'}"
-    )
-    reply_markup = get_main_reply_keyboard() if not context.user_data.get('awaiting_code', False) else ReplyKeyboardRemove()
+        success_text = (
+            "Супер, *ты в деле*! 🎉\n"
+            "Вы подписаны на все каналы или отправили заявки! 😍 Теперь ты можешь продолжить работать с ботом!\n"
+            f"{'Введи *числовой код* для поиска фильма! 🍿' if context.user_data.get('awaiting_code', False) else 'Выбери действие в меню ниже! 😎'}"
+        )
+        reply_markup = get_main_reply_keyboard() if not context.user_data.get('awaiting_code', False) else ReplyKeyboardRemove()
 
-    await asyncio.sleep(0.5)
-    await edit_message_with_retry(
-        context,
-        query.message.chat_id,
-        query.message.message_id,
-        success_text,
-        reply_markup=None  # Inline keyboard not needed here
-    )
-else:
-    logger.info(f"User {user_id} is not subscribed to some channels.")
-    promo_text = (
-        "Ой-ой! 😜 Похоже, ты пропустил пару каналов! 🚨\n"
-        "Подпишись или отправь заявку на вступление на все каналы ниже и снова нажми *Я ПОДПИСАЛСЯ!* 🌟"
-    )
-    keyboard = [[InlineKeyboardButton(btn["text"], url=btn["url"])] for btn in unsubscribed_channels]
-    keyboard.append([InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await edit_message_with_retry(
-        context,
-        query.message.chat_id,
-        query.message.message_id,
-        promo_text,
-        reply_markup=reply_markup
-    )
+        await asyncio.sleep(0.5)
+        await edit_message_with_retry(
+            context,
+            query.message.chat_id,
+            query.message.message_id,
+            success_text,
+            reply_markup=None  # Inline keyboard not needed here
+        )
+    else:
+        logger.info(f"User {user_id} is not subscribed to some channels.")
+        promo_text = (
+            "Ой-ой! 😜 Похоже, ты пропустил пару каналов! 🚨\n"
+            "Подпишись или отправь заявку на вступление на все каналы ниже и снова нажми *Я ПОДПИСАЛСЯ!* 🌟"
+        )
+        keyboard = [[InlineKeyboardButton(btn["text"], url=btn["url"])] for btn in unsubscribed_channels]
+        keyboard.append([InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ!", callback_data="check_subscription")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await edit_message_with_retry(
+            context,
+            query.message.chat_id,
+            query.message.message_id,
+            promo_text,
+            reply_markup=reply_markup
+        )
 
 def get_user_data(user_id: int) -> Optional[Dict[str, str]]:
-    """Retrieve user data from Users sheet."""
-    if user_sheet is None:
-        logger.error("Users sheet not initialized.")
-        return None
-    try:
-        all_values = user_sheet.get_all_values()[1:]  # Skip header
-        for row in all_values:
-            if not row or len(row) < 1:
-                continue
-            if row[0] == str(user_id):
-                return {
-                    "user_id": row[0],
-                    "username": row[1] if len(row) > 1 else "",
-                    "first_name": row[2] if len(row) > 2 else "",
-                    "search_queries": row[3] if len(row) > 3 else "0",
-                    "invited_users": row[4] if len(row) > 4 else "0"
-                }
-        return None
-    except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API error in get_user_data: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Unknown error in get_user_data: {e}")
-        return None
+    """Retrieve user data from cache."""
+    return USER_DICT.get(str(user_id))
 
-def add_user(user_id: int, username: str, first_name: str, search_queries: int, invited_users: int) -> None:
-    """Add a new user to Users sheet."""
+async def add_user(user_id: int, username: str, first_name: str, search_queries: int, invited_users: int) -> None:
+    """Add a new user to Users sheet and update cache."""
     if user_sheet is None:
         logger.error("Users sheet not initialized.")
         return
     try:
         row_to_add = [str(user_id), username, first_name, str(search_queries), str(invited_users)]
-        user_sheet.append_row(row_to_add)
+        await user_sheet.append_row(row_to_add)
+        await load_user_cache()  # Refresh cache
         logger.info(f"Added user {user_id} to Users sheet with {search_queries} search queries.")
-    except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API error in add_user: {e}")
     except Exception as e:
-        logger.error(f"Unknown error in add_user: {e}")
+        logger.error(f"Failed to add user {user_id} to Users sheet: {e}")
 
-def update_user(user_id: int, **kwargs) -> None:
-    """Update user data in Users sheet."""
+async def update_user(user_id: int, **kwargs) -> None:
+    """Update user data in Users sheet and cache."""
     if user_sheet is None:
         logger.error("Users sheet not initialized.")
         return
     try:
-        all_values = user_sheet.get_all_values()
+        all_values = await user_sheet.get_all_values()
         for idx, row in enumerate(all_values[1:], start=2):  # Skip header
             if not row or len(row) < 1 or row[0] != str(user_id):
                 continue
@@ -380,37 +374,33 @@ def update_user(user_id: int, **kwargs) -> None:
                 "invited_users": row[4] if len(row) > 4 else "0"
             }
             updates.update(kwargs)
-            user_sheet.update(f"A{idx}:E{idx}", [[
+            await user_sheet.update(f"A{idx}:E{idx}", [[
                 str(user_id),
                 updates["username"],
                 updates["first_name"],
                 str(updates["search_queries"]),
                 str(updates["invited_users"])
             ]])
+            await load_user_cache()  # Refresh cache
             logger.info(f"Updated user {user_id} in Users sheet.")
             return
         logger.warning(f"User {user_id} not found for update.")
-    except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API error in update_user: {e}")
     except Exception as e:
-        logger.error(f"Unknown error in update_user: {e}")
+        logger.error(f"Failed to update user {user_id}: {e}")
 
-def add_join_request(user_id: int, channel_id: int) -> None:
-    """Add a join request to JoinRequests sheet."""
+async def add_join_request(user_id: int, channel_id: int) -> None:
+    """Add a join request to JoinRequests sheet and update cache."""
     if join_requests_sheet is None:
         logger.error("JoinRequests sheet not initialized.")
         return
     try:
-        all_values = join_requests_sheet.get_all_values()[1:]  # Skip header
-        for row in all_values:
-            if row and len(row) >= 2 and row[0] == str(user_id) and row[1] == str(channel_id):
-                return  # Already exists
-        join_requests_sheet.append_row([str(user_id), str(channel_id)])
+        if (str(user_id), str(channel_id)) in JOIN_REQUESTS_DICT:
+            return  # Already exists
+        await join_requests_sheet.append_row([str(user_id), str(channel_id)])
+        await load_join_requests_cache()  # Refresh cache
         logger.info(f"Added join request for user {user_id} to channel {channel_id}")
-    except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API error in add_join_request: {e}")
     except Exception as e:
-        logger.error(f"Unknown error in add_join_request: {e}")
+        logger.error(f"Failed to add join request for user {user_id} to channel {channel_id}: {e}")
 
 def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
     """Find a movie by its code in cached MOVIE_DICT."""
@@ -455,7 +445,7 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data['awaiting_code'] = False
     if movie:
         # Decrement search queries
-        update_user(user_id, search_queries=search_queries - 1)
+        await update_user(user_id, search_queries=search_queries - 1)
         result_text = (
             f"*Бинго!* 🎥 Код {code}: *{movie['title']}* {random.choice(POSITIVE_EMOJIS)}\n"
             f"Осталось поисков: *{search_queries - 1}* 🔍\n"
@@ -542,7 +532,7 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = user.id
     chat_id = join_request.chat.id
     if str(chat_id) in CHANNELS:
-        add_join_request(user_id, chat_id)
+        await add_join_request(user_id, chat_id)
         logger.info(f"User {user_id} sent join request to channel {chat_id}")
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -589,7 +579,10 @@ app = Starlette(
 )
 
 async def startup():
-    """Initialize the bot and load movie data into cache."""
+    """Initialize the bot and load caches."""
+    # Initialize Google Sheets
+    await init_google_sheets()
+
     # Add handlers
     application_tg.add_error_handler(error_handler)
     application_tg.add_handler(CommandHandler("start", start))
@@ -602,15 +595,17 @@ async def startup():
     # Initialize application
     await application_tg.initialize()
 
-    # Load movie data into cache
+    # Load caches
     global MOVIE_DICT
-    if movie_sheet:
-        try:
-            all_values = movie_sheet.get_all_values()[1:]  # Skip header
-            MOVIE_DICT = {row[0].strip(): row[1].strip() for row in all_values if row and len(row) >= 2}
-            logger.info(f"Loaded {len(MOVIE_DICT)} movies into cache.")
-        except Exception as e:
-            logger.error(f"Error loading movie data into cache: {e}")
+    try:
+        all_values = await movie_sheet.get_all_values()
+        MOVIE_DICT = {row[0].strip(): row[1].strip() for row in all_values[1:] if row and len(row) >= 2}
+        logger.info(f"Loaded {len(MOVIE_DICT)} movies into cache.")
+    except Exception as e:
+        logger.error(f"Error loading movie data into cache: {e}")
+
+    await load_user_cache()
+    await load_join_requests_cache()
 
     # Set webhook
     full_webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
