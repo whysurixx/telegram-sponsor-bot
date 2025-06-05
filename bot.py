@@ -23,19 +23,19 @@ logger = logging.getLogger(__name__)
 # Configuration from environment variables
 TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-PORT = int(os.environ.get("PORT", 10000))  # Use Render's PORT environment variable
+PORT = int(os.environ.get("PORT", 10000))
 GOOGLE_CREDENTIALS_PATH = "/etc/secrets/GOOGLE_CREDENTIALS"
-BOT_USERNAME = os.environ.get("BOT_USERNAME")  # e.g., @YourBotName
+BOT_USERNAME = os.environ.get("BOT_USERNAME")
 MOVIE_SHEET_ID = "1hmm-rfUlDcA31QD04XRXIyaa_EpN8ObuHFc8cp7Rwms"
 USER_SHEET_ID = "1XYFfqmC5boLBB8HjjkyKA6AyN3WNCKy6U8LEmN8KvrA"
 
-# Load channels and buttons from environment variables
+# Load channels and buttons
 try:
     CHANNELS = json.loads(os.environ.get("CHANNEL_IDS", "[]"))
     CHANNEL_BUTTONS = json.loads(os.environ.get("CHANNEL_BUTTONS", "[]"))
     if not CHANNELS or not CHANNEL_BUTTONS:
         logger.error("CHANNEL_IDS or CHANNEL_BUTTONS are empty or not set.")
-        raise ValueError("CHANNEL_IDS and CHANNEL_BUTTONS must be set in environment variables.")
+        raise ValueError("CHANNEL_IDS and CHANNEL_BUTTONS must be set.")
     if len(CHANNELS) != len(CHANNEL_BUTTONS):
         logger.error("Number of channels and buttons do not match.")
         raise ValueError("Number of CHANNEL_IDS and CHANNEL_BUTTONS must match.")
@@ -46,25 +46,26 @@ except ValueError as e:
     logger.error(f"Configuration error for channels: {e}")
     raise
 
-# Validate essential environment variables
+# Validate environment variables
 if not WEBHOOK_URL:
-    logger.error("WEBHOOK_URL is not set in environment variables!")
-    raise ValueError("WEBHOOK_URL is not set in environment variables!")
+    logger.error("WEBHOOK_URL is not set!")
+    raise ValueError("WEBHOOK_URL is not set!")
 if not TOKEN:
-    logger.error("BOT_TOKEN is not set in environment variables!")
-    raise ValueError("BOT_TOKEN is not set in environment variables!")
+    logger.error("BOT_TOKEN is not set!")
+    raise ValueError("BOT_TOKEN is not set!")
 if not BOT_USERNAME:
-    logger.error("BOT_USERNAME is not set in environment variables!")
-    raise ValueError("BOT_USERNAME is not set in environment variables!")
+    logger.error("BOT_USERNAME is not set!")
+    raise ValueError("BOT_USERNAME is not set!")
 
+# Initialize Google Sheets
 movie_sheet = None
 user_sheet = None
+MOVIE_DICT = {}  # Cache for movie data
 try:
     if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
         logger.error(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
         raise FileNotFoundError(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
 
-    # Load credentials from the JSON file
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
@@ -74,18 +75,18 @@ try:
     
     # Movie sheet
     movie_spreadsheet = client.open_by_key(MOVIE_SHEET_ID)
-    movie_sheet = movie_spreadsheet.sheet1  # Movie data sheet
-    logger.info(f"Movie sheet initialized successfully (ID: {MOVIE_SHEET_ID}).")
+    movie_sheet = movie_spreadsheet.sheet1
+    logger.info(f"Movie sheet initialized (ID: {MOVIE_SHEET_ID}).")
     
     # User sheet
     user_spreadsheet = client.open_by_key(USER_SHEET_ID)
     try:
-        user_sheet = user_spreadsheet.worksheet("Users")  # User data sheet
+        user_sheet = user_spreadsheet.worksheet("Users")
     except gspread.exceptions.WorksheetNotFound:
         user_sheet = user_spreadsheet.add_worksheet(title="Users", rows=1000, cols=5)
         user_sheet.append_row(["user_id", "username", "first_name", "search_queries", "invited_users"])
-        logger.info(f"Created new 'Users' worksheet in user spreadsheet (ID: {USER_SHEET_ID}).")
-    logger.info(f"User sheet initialized successfully (ID: {USER_SHEET_ID}).")
+        logger.info(f"Created new 'Users' worksheet (ID: {USER_SHEET_ID}).")
+    logger.info(f"User sheet initialized (ID: {USER_SHEET_ID}).")
 except Exception as e:
     logger.error(f"Error initializing Google Sheets: {e}")
     raise
@@ -93,7 +94,7 @@ except Exception as e:
 # Initialize Telegram application
 application_tg = Application.builder().token(TOKEN).build()
 
-# List of random emojis for positive responses
+# Random emojis for responses
 POSITIVE_EMOJIS = ['😍', '🎉', '😎', '👍', '🔥', '😊', '😁', '⭐']
 
 # Custom keyboard
@@ -113,7 +114,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     first_name = user.first_name or ""
     logger.info(f"User {user_id} {first_name} started the bot.")
 
-    # Check for referral and store referrer_id
+    # Handle referral
     referrer_id = None
     if update.message.text.startswith("/start invite_"):
         try:
@@ -128,7 +129,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data['referrer_id'] = referrer_id
         logger.info(f"Stored referrer_id {referrer_id} for user {user_id}.")
 
-    # Register or update user in Users sheet
+    # Register or update user
     user_data = get_user_data(user_id)
     if not user_data:
         try:
@@ -219,7 +220,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data['subscription_confirmed'] = True
         logger.info(f"User {user_id} successfully confirmed subscription.")
 
-        # Process referral reward if referrer exists
+        # Process referral reward
         referrer_id = context.user_data.get('referrer_id')
         if referrer_id:
             referrer_data = get_user_data(referrer_id)
@@ -230,20 +231,18 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     search_queries=int(referrer_data.get("search_queries", 0)) + 2
                 )
                 logger.info(f"Referral reward processed for referrer {referrer_id} by user {user_id}.")
-                del context.user_data['referrer_id']  # Clear referrer_id after processing
+                del context.user_data['referrer_id']
 
         success_text = (
             "Супер, *ты в деле*! 🎉\n"
             "Вы подписаны на все каналы! 😍 Теперь ты можешь продолжить работать с ботом!\n"
             f"{'Введи *числовой код* для поиска фильма! 🍿' if context.user_data.get('awaiting_code', False) else 'Выбери действие в меню ниже! 😎'}"
         )
-        # Send a new message instead of editing to avoid inline keyboard issues
         await send_message_with_retry(
             query.message,
             success_text,
             reply_markup=get_main_keyboard() if not context.user_data.get('awaiting_code', False) else None
         )
-        # Optionally, delete the original inline keyboard message to clean up
         try:
             await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
         except Exception as e:
@@ -266,7 +265,6 @@ def get_user_data(user_id: int) -> Optional[Dict[str, str]]:
         return None
     try:
         all_values = user_sheet.get_all_values()[1:]  # Skip header
-        logger.info(f"get_user_data: all_values = {all_values}")
         for row in all_values:
             if not row or len(row) < 1:
                 continue
@@ -293,7 +291,6 @@ def add_user(user_id: int, username: str, first_name: str, search_queries: int, 
         return
     try:
         row_to_add = [str(user_id), username, first_name, str(search_queries), str(invited_users)]
-        logger.info(f"Adding row to Users sheet: {row_to_add}")
         user_sheet.append_row(row_to_add)
         logger.info(f"Added user {user_id} to Users sheet with {search_queries} search queries.")
     except gspread.exceptions.APIError as e:
@@ -334,29 +331,10 @@ def update_user(user_id: int, **kwargs) -> None:
         logger.error(f"Unknown error in update_user: {e}")
 
 def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
-    """Find a movie by its code in Google Sheets."""
-    if movie_sheet is None:
-        logger.error("Movie sheet not initialized. Cannot perform search.")
-        return None
-
-    try:
-        all_values = movie_sheet.get_all_values()
-        for row_data in all_values:
-            if not row_data or len(row_data) < 2:
-                continue
-            sheet_code = row_data[0].strip()
-            sheet_title = row_data[1].strip()
-            if sheet_code == code:
-                logger.info(f"Found movie with code {code}: {sheet_title}")
-                return {"code": sheet_code, "title": sheet_title}
-        logger.info(f"Movie with code {code} not found.")
-        return None
-    except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API error: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Unknown error accessing Google Sheets: {e}")
-        return None
+    """Find a movie by its code in cached MOVIE_DICT."""
+    if code in MOVIE_DICT:
+        return {"code": code, "title": MOVIE_DICT[code]}
+    return None
 
 async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle numeric movie code input."""
@@ -373,16 +351,11 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await send_message_with_retry(update.message, "Ой, нужен *только числовой код*! 😊 Введи цифры, и мы найдём твой фильм! 🔢")
         return
 
-    if not context.user_data.get('subscription_confirmed', False):
-        logger.info(f"User {user_id} has not confirmed subscription. Prompting to subscribe.")
-        await prompt_subscribe(update, context)
-        return
-
     # Check search queries
     user_data = get_user_data(user_id)
     if not user_data:
         logger.error(f"User {user_id} not found in Users sheet.")
-        await send_message_with_retry(update.message, "Упс, что-то пошло не так! 😢 Попробуй снова или напиши в поддержку.", reply_markup=get_main_keyboard())
+        await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота или напиши в поддержку.", reply_markup=get_main_keyboard())
         return
     search_queries = int(user_data.get("search_queries", 0))
     if search_queries <= 0:
@@ -395,7 +368,7 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data['awaiting_code'] = False
         return
 
-    logger.info(f"User {user_id} confirmed subscription. Processing code: {code}")
+    logger.info(f"User {user_id} processing code: {code}")
     movie = find_movie_by_code(code)
     context.user_data['awaiting_code'] = False
     if movie:
@@ -430,7 +403,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user_data = get_user_data(user_id)
         if not user_data:
             logger.error(f"User {user_id} not found in Users sheet.")
-            await send_message_with_retry(update.message, "Упс, что-то пошло не так! 😢 Попробуй снова или напиши в поддержку.", reply_markup=get_main_keyboard())
+            await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота или напиши в поддержку.", reply_markup=get_main_keyboard())
             return
         referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
         invited_users = user_data.get("invited_users", "0")
@@ -445,10 +418,6 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         await send_message_with_retry(update.message, referral_text, reply_markup=get_main_keyboard())
     elif text == "❓ Как работает бот":
-        if not context.user_data.get('subscription_confirmed', False):
-            logger.info(f"User {user_id} pressed How-to without subscription.")
-            await prompt_subscribe(update, context)
-            return
         how_it_works_text = (
             "🎬 *Как работает наш кино-бот?* 🎥\n\n"
             "Я — твой личный помощник в мире кино! 🍿 Моя главная задача — помочь тебе найти фильмы по секретным числовым кодам. Вот как это работает:\n\n"
@@ -479,7 +448,7 @@ async def handle_non_button_text(update: Update, context: ContextTypes.DEFAULT_T
     logger.info(f"User {update.message.from_user.id} sent non-button text: {update.message.text}")
     await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню ниже! 👇", reply_markup=get_main_keyboard())
 
-# Define the webhook endpoint
+# Webhook endpoint
 async def webhook_endpoint(request):
     try:
         body = await request.body()
@@ -491,30 +460,41 @@ async def webhook_endpoint(request):
         logger.error(f"Error processing webhook update: {e}")
         return PlainTextResponse("Error", status_code=500)
 
-# Define a health check endpoint
+# Health check endpoint
 async def health_check(request):
     return PlainTextResponse("OK", status_code=200)
 
-# Define the ASGI application
+# ASGI application
 app = Starlette(
     routes=[
         Route(f"/{TOKEN}", endpoint=webhook_endpoint, methods=["POST"]),
-        Route("/", endpoint=health_check, methods=["GET", "HEAD"])  # Health check endpoint
+        Route("/", endpoint=health_check, methods=["GET", "HEAD"])
     ]
 )
 
 async def startup():
-    # Add handlers to the application
+    """Initialize the bot and load movie data into cache."""
+    # Add handlers
     application_tg.add_handler(CommandHandler("start", start))
     application_tg.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+$'), handle_movie_code))
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^\d+$'), handle_non_button_text))
 
-    # Initialize the application
+    # Initialize application
     await application_tg.initialize()
 
-    # Set the webhook
+    # Load movie data into cache
+    global MOVIE_DICT
+    if movie_sheet:
+        try:
+            all_values = movie_sheet.get_all_values()[1:]  # Skip header
+            MOVIE_DICT = {row[0].strip(): row[1].strip() for row in all_values if row and len(row) >= 2}
+            logger.info(f"Loaded {len(MOVIE_DICT)} movies into cache.")
+        except Exception as e:
+            logger.error(f"Error loading movie data into cache: {e}")
+
+    # Set webhook
     full_webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
     logger.info(f"Setting webhook to: {full_webhook_url}")
     try:
@@ -524,17 +504,15 @@ async def startup():
         logger.error(f"Failed to set webhook: {e}")
         raise
 
-    # Start the application
+    # Start application
     await application_tg.start()
     logger.info("Application started successfully.")
 
-# Add startup event handler
-app.add_event_handler("startup", startup)
-
-# Optional: Add shutdown event handler
 async def shutdown():
+    """Shut down the application."""
     await application_tg.stop()
     await application_tg.shutdown()
     logger.info("Application shut down successfully.")
 
+app.add_event_handler("startup", startup)
 app.add_event_handler("shutdown", shutdown)
