@@ -8,7 +8,8 @@ from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.responses import PlainTextResponse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes
+from telegram.ext import filters  # Импорт filters корректен для v21.3
 from telegram.error import RetryAfter
 from google.oauth2.service_account import Credentials
 import gspread
@@ -164,7 +165,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Привет, *киноман*! 🎬\n"
         "Добро пожаловать в твой личный кино-гид! 🍿 Я помогу найти фильмы по секретным кодам и открою мир кино! 🚀\n"
         f"{'Ты был приглашён другом! 😎 ' if referrer_id else ''}"
-        "Выбери действие в меню ниже, и начнём приключение! 😎"
+        "Выбери действие в меню ниже, и-beginнем приключение! 😎"
     )
     await send_message_with_retry(update.message, welcome_text, reply_markup=get_main_keyboard())
 
