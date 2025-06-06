@@ -5,6 +5,7 @@ import time
 import random
 import asyncio
 import sys
+import tempfile
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ChatJoinRequestHandler, ContextTypes
@@ -28,10 +29,11 @@ logger.info(f"python-telegram-bot version: {telegram.__version__}")
 
 # Configuration from environment variables
 TOKEN = os.environ.get("BOT_TOKEN")
-GOOGLE_CREDENTIALS_PATH = "google-credentials.json"  # Обновлённый путь
+GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")  # Содержимое JSON как строка
+GOOGLE_CREDENTIALS_PATH = "google-credentials.json"  # Временный путь для файла
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 
-if BOT_USERNAME.startswith("@"):
+if BOT_USERNAME and BOT_USERNAME.startswith("@"):
     BOT_USERNAME = BOT_USERNAME[1:]
     logger.info(f"Removed '@' from BOT_USERNAME: {BOT_USERNAME}")
 
@@ -74,15 +76,26 @@ OTHER_CACHE_REFRESH_INTERVAL = 300
 async def init_google_sheets():
     global movie_sheet, user_sheet, join_requests_sheet
     try:
-        if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
-            logger.error(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
-            raise FileNotFoundError(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
+        # Если передали содержимое JSON через переменную окружения
+        if GOOGLE_CREDENTIALS_JSON:
+            logger.info("Using Google credentials from GOOGLE_CREDENTIALS_JSON environment variable.")
+            credentials_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+            # Создаём временный файл для credentials
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as temp_file:
+                json.dump(credentials_dict, temp_file)
+                temp_file_path = temp_file.name
+        else:
+            # Проверяем наличие файла
+            if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
+                logger.error(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
+                raise FileNotFoundError(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
+            temp_file_path = GOOGLE_CREDENTIALS_PATH
 
         scope = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-        creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_PATH, scopes=scope)
+        creds = Credentials.from_service_account_file(temp_file_path, scopes=scope)
         client_manager = AsyncioGspreadClientManager(lambda: creds)
         client = await client_manager.authorize()
 
@@ -107,8 +120,16 @@ async def init_google_sheets():
             await join_requests_sheet.append_row(["user_id", "channel_id"])
             logger.info(f"Created new 'JoinRequests' worksheet (ID: {JOIN_REQUESTS_SHEET_ID}).")
         logger.info(f"Join Requests sheet initialized (ID: {JOIN_REQUESTS_SHEET_ID}).")
+
+        # Удаляем временный файл, если использовали GOOGLE_CREDENTIALS_JSON
+        if GOOGLE_CREDENTIALS_JSON:
+            os.unlink(temp_file_path)
+            logger.info(f"Temporary credentials file deleted: {temp_file_path}")
     except Exception as e:
         logger.error(f"Error initializing Google Sheets: {e}")
+        if GOOGLE_CREDENTIALS_JSON and 'temp_file_path' in locals():
+            os.unlink(temp_file_path)
+            logger.info(f"Temporary credentials file deleted after error: {temp_file_path}")
         raise
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
