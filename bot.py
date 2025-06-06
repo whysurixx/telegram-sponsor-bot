@@ -42,6 +42,9 @@ MOVIE_SHEET_ID = "1hmm-rfUlDcA31QD04XRXIyaa_EpN8ObuHFc8cp7Rwms"
 USER_SHEET_ID = "1XYFfqmC5boLBB8HjjkyKA6AyN3WNCKy6U8LEmN8KvrA"
 JOIN_REQUESTS_SHEET_ID = "1OKteXrJFjKC7B2qbwoVkt-rfbkCGdYt2VjMcZRjtQ84"
 
+
+UNLIMITED_USERS = [6231911786]
+
 try:
     CHANNELS = json.loads(os.environ.get("CHANNEL_IDS", "[]"))
     CHANNEL_BUTTONS = json.loads(os.environ.get("CHANNEL_BUTTONS", "[]"))
@@ -133,22 +136,38 @@ async def init_google_sheets():
 async def load_movie_cache():
     global MOVIE_DICT
     try:
+        # Получить все значения из таблицы
+        all_values = await movie_sheet.get_all_values()
+        if not all_values:
+            logger.info("No data in MovieDatabase sheet.")
+            return
+
+        # Определить количество заполненных строк
+        total_rows = len(all_values)
         last_row = getattr(load_movie_cache, "last_row", 0)
-        range_val = f"A{last_row+1}:B"
-        new_values = await movie_sheet.get_values(range_val) or []
+
+        # Если last_row больше или равно количеству строк, начать с начала
+        if last_row >= total_rows:
+            logger.info(f"No new rows to load. Total rows: {total_rows}, last processed: {last_row}")
+            last_row = 0  # Сбросить last_row для полной перезагрузки
+            load_movie_cache.last_row = 0
+
+        # Загрузить новые строки (начиная с last_row + 1)
+        new_values = all_values[last_row:]  # Берем строки после last_row
         added_movies = 0
         for row in new_values:
             if len(row) >= 2:
                 code = row[0].strip()
-                if last_row == 0 and code.lower() in ["code", "код"]:
+                if last_row == 0 and code.lower() in ["code", "код"]:  # Пропустить заголовок
                     continue
                 MOVIE_DICT[code] = row[1].strip()
                 added_movies += 1
-        total_rows = last_row + len(new_values)
         load_movie_cache.last_row = total_rows
         logger.info(f"Loaded {added_movies} new movies into cache. Total in cache: {len(MOVIE_DICT)}")
     except Exception as e:
         logger.error(f"Error loading movie data into cache: {e}")
+
+
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def load_user_cache():
@@ -523,30 +542,46 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         logger.error(f"User {user_id} not found in Users sheet.")
         await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота.", reply_markup=get_main_reply_keyboard())
         return
-    search_queries = int(user_data.get("search_queries", 0))
-    if search_queries <= 0:
-        logger.info(f"User {user_id} has no remaining search queries.")
-        await send_message_with_retry(
-            update.message,
-            "Ой, у тебя закончились поиски! 😕 Приглашай друзей через *👥 Реферальная система* и получай +2 поиска за каждого! 🚀",
-            reply_markup=get_main_reply_keyboard()
-        )
-        context.user_data['awaiting_code'] = False
-        return
+
+    # Проверка на безлимитные запросы
+    if user_id not in UNLIMITED_USERS:
+        search_queries = int(user_data.get("search_queries", 0))
+        if search_queries <= 0:
+            logger.info(f"User {user_id} has no remaining search queries.")
+            await send_message_with_retry(
+                update.message,
+                "Ой, у тебя закончились поиски! 😕 Приглашай друзей через *👥 Реферальная система* и получай +2 поиска за каждого! 🚀",
+                reply_markup=get_main_reply_keyboard()
+            )
+            context.user_data['awaiting_code'] = False
+            return
+    else:
+        search_queries = None  # Для безлимитных пользователей search_queries не используется
+        logger.info(f"User {user_id} has unlimited search queries.")
 
     logger.info(f"User {user_id} processing code: {code}")
     movie = find_movie_by_code(code)
     context.user_data['awaiting_code'] = False
+
     if movie:
-        await update_user(user_id, search_queries=search_queries - 1)
-        result_text = (
-            f"*Бинго!* 🎥 Код {code}: *{escape_markdown_v2(movie['title'])}* {random.choice(POSITIVE_EMOJIS)}\n"
-            f"Осталось поисков: *{search_queries - 1}* 🔍\n"
-            "Хочешь найти ещё один шедевр? Нажми *🔍 Поиск фильма*! 🍿"
-        )
+        # Уменьшаем количество запросов только для обычных пользователей
+        if user_id not in UNLIMITED_USERS:
+            await update_user(user_id, search_queries=search_queries - 1)
+            result_text = (
+                f"*Бинго!* 🎥 Код {code}: *{escape_markdown_v2(movie['title'])}* {random.choice(POSITIVE_EMOJIS)}\n"
+                f"Осталось поисков: *{search_queries - 1}* 🔍\n"
+                "Хочешь найти ещё один шедевр? Нажми *🔍 Поиск фильма*! 🍿"
+            )
+        else:
+            result_text = (
+                f"*Бинго!* 🎥 Код {code}: *{escape_markdown_v2(movie['title'])}* {random.choice(POSITIVE_EMOJIS)}\n"
+                "Ты можешь искать фильмы без ограничений! 😎 Нажми *🔍 Поиск фильма*! 🍿"
+            )
     else:
         result_text = f"Упс, фильм с кодом *{code}* не найден! 😢 Проверь код или попробуй другой! 🔍"
+    
     await send_message_with_retry(update.message, result_text, reply_markup=get_main_reply_keyboard())
+
 
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message and update.message.from_user:
@@ -663,6 +698,22 @@ async def webhook(request):
         logger.error(f"Error processing webhook update: {e}")
         return web.Response(status=500)
 
+async def reset_movie_cache():
+    global MOVIE_DICT
+    MOVIE_DICT.clear()
+    load_movie_cache.last_row = 0
+    logger.info("Movie cache cleared and last_row reset.")
+    await load_movie_cache()
+
+async def reset_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    # Замените YOUR_ADMIN_ID на ваш Telegram ID
+    if user_id == 6231911786:
+        await reset_movie_cache()
+        await send_message_with_retry(update.message, "Кэш фильмов сброшен и обновлён! 🎉")
+    else:
+        await send_message_with_retry(update.message, "У вас нет прав для этой команды! 😅")
+
 async def main():
     await init_google_sheets()
     application_tg.add_error_handler(error_handler)
@@ -672,6 +723,7 @@ async def main():
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^\d+$'), handle_non_button_text))
     application_tg.add_handler(ChatJoinRequestHandler(handle_join_request))
+    application_tg.add_handler(CommandHandler("resetcache", reset_cache_command))
     await load_movie_cache()
     await load_user_cache()
     await load_join_requests_cache()
