@@ -405,12 +405,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             success_text,
             reply_markup=None
         )
-        if not context.user_data.get('awaiting_code', False):
-            await send_message_with_retry(
-                query.message,
-                "Выбери действие в меню ниже! 😎",
-                reply_markup=reply_markup
-            )
+
     else:
         logger.info(f"User {user_id} is not subscribed to some channels.")
         promo_text = (
@@ -656,11 +651,6 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             update.callback_query.message.message_id,
             "Упс, что-то пошло не так! 😢 Попробуй снова.",
             reply_markup=None
-        )
-        await send_message_with_retry(
-            update.callback_query.message,
-            "Выбери действие в меню ниже! 😎",
-            reply_markup=get_main_reply_keyboard()
         )
 
 async def webhook(request):
