@@ -694,13 +694,24 @@ async def main():
     try:
         await application_tg.bot.get_updates(timeout=0)
         logger.info("No conflicting instances detected.")
-    except telegram.error.Conflict:
-        logger.error("Another instance of the bot is running! Stopping this instance...")
+    except telegram.error.Conflict as e:
+        logger.error(f"Another instance of the bot is running! Conflict error: {e}. Stopping this instance...")
+        # Попробуем удалить Webhook, если он установлен
+        try:
+            await application_tg.bot.delete_webhook()
+            logger.info("Webhook deleted. Retrying polling...")
+            await application_tg.updater.start_polling()
+        except Exception as delete_error:
+            logger.error(f"Failed to delete webhook: {delete_error}. Please check manually.")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error during initialization: {e}")
         sys.exit(1)
     await application_tg.updater.start_polling()
     logger.info("Bot started successfully. Polling for updates...")
     while True:
         await asyncio.sleep(3600)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
