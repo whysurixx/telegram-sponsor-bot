@@ -524,64 +524,64 @@ def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
     return None
 
 async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
- code = update.message.text.strip()
- user_id = update.message.from_user.id
+    code = update.message.text.strip()
+    user_id = update.message.from_user.id
 
- if not context.user_data.get('awaiting_code', False):
- logger.info(f"User {user_id} sent code without activating search mode.")
- await send_message_with_retry(update.message, "Эй, *киноман*! 😅 Сначала нажми *🔍 Поиск фильма*, а потом введи код! 🍿", reply_markup=get_main_reply_keyboard())
- return
+    if not context.user_data.get('awaiting_code', False):
+        logger.info(f"User {user_id} sent code without activating search mode.")
+        await send_message_with_retry(update.message, "Эй, *киноман*! 😅 Сначала нажми *🔍 Поиск фильма*, а потом введи код! 🍿", reply_markup=get_main_reply_keyboard())
+        return
 
- if not code.isdigit():
- logger.info(f"User {user_id} entered non-numeric code: {code}")
- await send_message_with_retry(update.message, "Ой, нужен *только числовой код*! 😊 Введи цифры, и мы найдём твой фильм! 🔢", reply_markup=get_search_reply_keyboard())
- return
+    if not code.isdigit():
+        logger.info(f"User {user_id} entered non-numeric code: {code}")
+        await send_message_with_retry(update.message, "Ой, нужен *только числовой код*! 😊 Введи цифры, и мы найдём твой фильм! 🔢", reply_markup=get_search_reply_keyboard())
+        return
 
- user_data = get_user_data(user_id)
- if not user_data:
- logger.error(f"User {user_id} not found in Users sheet.")
- await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота.", reply_markup=get_main_reply_keyboard())
- return
+    user_data = get_user_data(user_id)
+    if not user_data:
+        logger.error(f"User {user_id} not found in Users sheet.")
+        await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота.", reply_markup=get_main_reply_keyboard())
+        return
 
- # Проверка на безлимитные запросы
- if user_id not in UNLIMITED_USERS:
- search_queries = int(user_data.get("search_queries", 0))
- if search_queries <= 0:
- logger.info(f"User {user_id} has no remaining search queries.")
- await send_message_with_retry(
- update.message,
- "Ой, у тебя закончились поиски! 😕 Приглашай друзей через *👥 Реферальная система* и получай +2 поиска за каждого! 🚀",
- reply_markup=get_main_reply_keyboard()
- )
- context.user_data['awaiting_code'] = False
- return
- else:
- search_queries = None # Для безлимитных пользователей search_queries не используется
- logger.info(f"User {user_id} has unlimited search queries.")
+    # Проверка на безлимитные запросы
+    if user_id not in UNLIMITED_USERS:
+        search_queries = int(user_data.get("search_queries", 0))
+        if search_queries <= 0:
+            logger.info(f"User {user_id} has no remaining search queries.")
+            await send_message_with_retry(
+                update.message,
+                "Ой, у тебя закончились поиски! 😕 Приглашай друзей через *👥 Реферальная система* и получай +2 поиска за каждого! 🚀",
+                reply_markup=get_main_reply_keyboard()
+            )
+            context.user_data['awaiting_code'] = False
+            return
+    else:
+        search_queries = None  # Для безлимитных пользователей search_queries не используется
+        logger.info(f"User {user_id} has unlimited search queries.")
 
- logger.info(f"User {user_id} processing code: {code}")
- movie = find_movie_by_code(code)
- context.user_data['awaiting_code'] = False
+    logger.info(f"User {user_id} processing code: {code}")
+    movie = find_movie_by_code(code)
+    context.user_data['awaiting_code'] = False
 
- if movie:
- # Уменьшаем количество запросов только для обычных пользователей
- if user_id not in UNLIMITED_USERS:
- await update_user(user_id, search_queries=search_queries - 1)
- result_text = (
- f"*Бинго!* 🎥 Код {code}: *{escape_markdown_v2(movie ['title'])}* {random.choice(POSITIVE_EMOJIS)}\n"
- f"Осталось поисков: *{search_queries - 1}* 🔍\n"
- "Хочешь найти ещё один шедевр? Нажми *🔍 Поиск фильма*! 🍿"
- )
- else:
- result_text = (
- f"*Бинго!* 🎥 Код {code}: *{escape_markdown_v2(movie['title'])}* {random.choice(POSITIVE_EMOJIS)}\n"
- f"Осталось поисков: *∞ (безлимит)* 🔍\n"
- "Хочешь найти ещё один шедевр? Нажми *🔍 Поиск фильма*! 🍿"
- )
- else:
- result_text = f"Упс, фильм с кодом *{code}* не найден! 😢 Проверь код или попробуй другой! 🔍"
- 
- await send_message_with_retry(update.message, result_text, reply_markup=get_main_reply_keyboard())
+    if movie:
+        # Уменьшаем количество запросов только для обычных пользователей
+        if user_id not in UNLIMITED_USERS:
+            await update_user(user_id, search_queries=search_queries - 1)
+            result_text = (
+                f"*Бинго!* 🎥 Код {code}: *{escape_markdown_v2(movie['title'])}* {random.choice(POSITIVE_EMOJIS)}\n"
+                f"Осталось поисков: *{search_queries - 1}* 🔍\n"
+                "Хочешь найти ещё один шедевр? Нажми *🔍 Поиск фильма*! 🍿"
+            )
+        else:
+            result_text = (
+                f"*Бинго!* 🎥 Код {code}: *{escape_markdown_v2(movie['title'])}* {random.choice(POSITIVE_EMOJIS)}\n"
+                f"Осталось поисков: *∞ (безлимит)* 🔍\n"
+                "Хочешь найти ещё один шедевр? Нажми *🔍 Поиск фильма*! 🍿"
+            )
+    else:
+        result_text = f"Упс, фильм с кодом *{code}* не найден! 😢 Проверь код или попробуй другой! 🔍"
+
+    await send_message_with_retry(update.message, result_text, reply_markup=get_main_reply_keyboard())
 
 
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
