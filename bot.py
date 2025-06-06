@@ -13,7 +13,7 @@ from telegram.error import RetryAfter
 from google.oauth2.service_account import Credentials
 from gspread_asyncio import AsyncioGspreadClientManager
 from typing import Optional, Dict, List
-import telegram  # Для логирования версии
+import telegram
 from tenacity import retry, stop_after_attempt, wait_fixed
 from cachetools import LRUCache
 
@@ -24,12 +24,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Логируем версию python-telegram-bot
 logger.info(f"python-telegram-bot version: {telegram.__version__}")
 
 # Configuration from environment variables
 TOKEN = os.environ.get("BOT_TOKEN")
-GOOGLE_CREDENTIALS_PATH = "/etc/secrets/GOOGLE_CREDENTIALS"
+GOOGLE_CREDENTIALS_PATH = "google-credentials.json"  # Обновлённый путь
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 
 if BOT_USERNAME.startswith("@"):
@@ -40,7 +39,6 @@ MOVIE_SHEET_ID = "1hmm-rfUlDcA31QD04XRXIyaa_EpN8ObuHFc8cp7Rwms"
 USER_SHEET_ID = "1XYFfqmC5boLBB8HjjkyKA6AyN3WNCKy6U8LEmN8KvrA"
 JOIN_REQUESTS_SHEET_ID = "1OKteXrJFjKC7B2qbwoVkt-rfbkCGdYt2VjMcZRjtQ84"
 
-# Load channels and buttons
 try:
     CHANNELS = json.loads(os.environ.get("CHANNEL_IDS", "[]"))
     CHANNEL_BUTTONS = json.loads(os.environ.get("CHANNEL_BUTTONS", "[]"))
@@ -57,7 +55,6 @@ except ValueError as e:
     logger.error(f"Configuration error for channels: {e}")
     raise
 
-# Validate environment variables
 if not TOKEN:
     logger.error("BOT_TOKEN is not set!")
     raise ValueError("BOT_TOKEN is not set!")
@@ -65,15 +62,14 @@ if not BOT_USERNAME:
     logger.error("BOT_USERNAME is not set!")
     raise ValueError("BOT_USERNAME is not set!")
 
-# Initialize Google Sheets
 movie_sheet = None
 user_sheet = None
 join_requests_sheet = None
-MOVIE_DICT = LRUCache(maxsize=5000)  # Cache for movie data with max 5000 entries
-USER_DICT = LRUCache(maxsize=5000)   # Cache for user data with max 5000 entries
-JOIN_REQUESTS_DICT = {}              # Cache for join requests
-MOVIE_CACHE_REFRESH_INTERVAL = 60    # Refresh movie cache every 1 minute
-OTHER_CACHE_REFRESH_INTERVAL = 300   # Refresh user and join requests cache every 5 minutes
+MOVIE_DICT = LRUCache(maxsize=5000)
+USER_DICT = LRUCache(maxsize=5000)
+JOIN_REQUESTS_DICT = {}
+MOVIE_CACHE_REFRESH_INTERVAL = 60
+OTHER_CACHE_REFRESH_INTERVAL = 300
 
 async def init_google_sheets():
     global movie_sheet, user_sheet, join_requests_sheet
@@ -90,12 +86,10 @@ async def init_google_sheets():
         client_manager = AsyncioGspreadClientManager(lambda: creds)
         client = await client_manager.authorize()
 
-        # Movie sheet
         movie_spreadsheet = await client.open_by_key(MOVIE_SHEET_ID)
         movie_sheet = await movie_spreadsheet.get_worksheet(0)
         logger.info(f"Movie sheet initialized (ID: {MOVIE_SHEET_ID}).")
         
-        # User sheet
         user_spreadsheet = await client.open_by_key(USER_SHEET_ID)
         try:
             user_sheet = await user_spreadsheet.worksheet("Users")
@@ -105,7 +99,6 @@ async def init_google_sheets():
             logger.info(f"Created new 'Users' worksheet (ID: {USER_SHEET_ID}).")
         logger.info(f"User sheet initialized (ID: {USER_SHEET_ID}).")
         
-        # Join Requests sheet
         join_requests_spreadsheet = await client.open_by_key(JOIN_REQUESTS_SHEET_ID)
         try:
             join_requests_sheet = await join_requests_spreadsheet.worksheet("JoinRequests")
@@ -123,21 +116,22 @@ async def load_movie_cache():
     """Load movie data into cache from Google Sheets incrementally."""
     global MOVIE_DICT
     try:
-        # Get the last processed row, default to 0 if not set
         last_row = getattr(load_movie_cache, "last_row", 0)
-        # Fetch only new rows starting from last_row + 1
         range_val = f"A{last_row+1}:B"
         new_values = await movie_sheet.get_values(range_val) or []
+        added_movies = 0
         for row in new_values:
             if len(row) >= 2:
-                MOVIE_DICT[row[0].strip()] = row[1].strip()
-        # Update last_row to the total number of rows processed
+                code = row[0].strip()
+                if last_row == 0 and code.lower() in ["code", "код"]:
+                    continue
+                MOVIE_DICT[code] = row[1].strip()
+                added_movies += 1
         total_rows = last_row + len(new_values)
         load_movie_cache.last_row = total_rows
-        logger.info(f"Loaded {len(new_values)} new movies into cache. Total in cache: {len(MOVIE_DICT)}")
+        logger.info(f"Loaded {added_movies} new movies into cache. Total in cache: {len(MOVIE_DICT)}")
     except Exception as e:
         logger.error(f"Error loading movie data into cache: {e}")
-        # Keep existing cache if refresh fails
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def load_user_cache():
@@ -159,7 +153,6 @@ async def load_user_cache():
         logger.info(f"Loaded {len(USER_DICT)} users into cache.")
     except Exception as e:
         logger.error(f"Error loading user cache: {e}")
-        # Keep existing cache if refresh fails
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def load_join_requests_cache():
@@ -168,7 +161,6 @@ async def load_join_requests_cache():
     try:
         all_values = await join_requests_sheet.get_all_values()
         new_dict = {(row[0], row[1]): True for row in all_values[1:] if row and len(row) >= 2}
-        # Limit to 10,000 entries to prevent memory bloat
         if len(new_dict) > 10000:
             new_dict = dict(list(new_dict.items())[-10000:])
         JOIN_REQUESTS_DICT.clear()
@@ -176,7 +168,6 @@ async def load_join_requests_cache():
         logger.info(f"Loaded {len(JOIN_REQUESTS_DICT)} join requests into cache.")
     except Exception as e:
         logger.error(f"Error loading join requests cache: {e}")
-        # Keep existing cache if refresh fails
 
 async def log_cache_size():
     """Log the memory size of caches periodically."""
@@ -186,7 +177,7 @@ async def log_cache_size():
             user_size = sys.getsizeof(USER_DICT) + sum(sys.getsizeof(k) + sys.getsizeof(v) for k, v in USER_DICT.items())
             join_requests_size = sys.getsizeof(JOIN_REQUESTS_DICT) + sum(sys.getsizeof(k) for k in JOIN_REQUESTS_DICT)
             logger.info(f"Cache sizes: movies={movie_size/1024:.2f} KB, users={user_size/1024:.2f} KB, join_requests={join_requests_size/1024:.2f} KB")
-            await asyncio.sleep(3600)  # Log every hour
+            await asyncio.sleep(3600)
         except Exception as e:
             logger.error(f"Error logging cache size: {e}")
             await asyncio.sleep(3600)
@@ -212,13 +203,10 @@ async def refresh_other_caches_periodically():
             logger.error(f"Error during other caches refresh: {e}")
             await asyncio.sleep(OTHER_CACHE_REFRESH_INTERVAL)
 
-# Initialize Telegram application
 application_tg = Application.builder().token(TOKEN).build()
 
-# Random emojis for responses
 POSITIVE_EMOJIS = ['😍', '🎉', '😎', '👍', '🔥', '😊', '😁', '⭐']
 
-# Custom reply keyboard for main menu
 def get_main_reply_keyboard():
     keyboard = [
         [KeyboardButton("🔍 Поиск фильма"), KeyboardButton("👥 Реферальная система")],
@@ -226,7 +214,6 @@ def get_main_reply_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
-# Custom reply keyboard for search mode with Back button
 def get_search_reply_keyboard():
     keyboard = [
         [KeyboardButton("❌ Назад")]
@@ -234,21 +221,18 @@ def get_search_reply_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
 def escape_markdown_v2(text: str) -> str:
-    """Экранирование специальных символов для MarkdownV2."""
     special_chars = r'_*[]()~`>#+-=|{}.!'
     for char in special_chars:
         text = text.replace(char, f'\\{char}')
     return text
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the /start command, including referral links."""
     user = update.message.from_user
     user_id = user.id
     username = user.username or ""
     first_name = user.first_name or ""
     logger.info(f"User {user_id} {first_name} started the bot with message: {update.message.text}")
 
-    # Handle referral
     referrer_id = None
     if update.message.text.startswith("/start invite_"):
         try:
@@ -257,14 +241,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 logger.info(f"User {user_id} tried to invite themselves.")
                 await send_message_with_retry(update.message, "❌ Вы не можете пригласить себя!", reply_markup=get_main_reply_keyboard())
                 return
-            else:
-                logger.info(f"Referral detected for user {user_id} from referrer {referrer_id}")
-                context.user_data['referrer_id'] = referrer_id
+            logger.info(f"Referral detected for user {user_id} from referrer {referrer_id}")
+            context.user_data['referrer_id'] = referrer_id
         except (IndexError, ValueError):
             logger.warning(f"Invalid referral link for user {user_id}: {update.message.text}")
             referrer_id = None
 
-    # Register or update user
     user_data = get_user_data(user_id)
     if not user_data:
         try:
@@ -285,7 +267,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await send_message_with_retry(update.message, welcome_text, reply_markup=get_main_reply_keyboard())
 
 async def send_message_with_retry(message, text: str, reply_markup=None, parse_mode: str = 'Markdown') -> None:
-    """Send a message with retry on flood control."""
     try:
         await message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     except RetryAfter as e:
@@ -294,14 +275,12 @@ async def send_message_with_retry(message, text: str, reply_markup=None, parse_m
         await message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"Failed to send message: {e}, Response: {e.__dict__}")
-        # Try sending without parse_mode
         try:
             await message.reply_text(text, reply_markup=reply_markup)
         except Exception as e2:
             logger.error(f"Failed to send message without parse_mode: {e2}")
 
 async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
-    """Edit a message with retry on flood control."""
     try:
         await context.bot.edit_message_text(
             chat_id=chat_id,
@@ -322,7 +301,6 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         )
     except Exception as e:
         logger.error(f"Failed to edit message: {e}, Response: {e.__dict__}")
-        # Try editing without Markdown
         try:
             await context.bot.edit_message_text(
                 chat_id=chat_id,
@@ -334,7 +312,6 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
             logger.error(f"Failed to edit message without Markdown: {e2}")
 
 async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: Optional[int] = None) -> None:
-    """Prompt user to subscribe to channels."""
     promo_text = (
         "Эй, *кинофан*! 🎥\n"
         "Чтобы открыть доступ к фильмам, подпишись на наших крутых спонсоров! 🌟\n"
@@ -350,11 +327,9 @@ async def prompt_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, m
         await send_message_with_retry(update.message, promo_text, reply_markup=reply_markup)
 
 def has_sent_join_request(user_id: int, channel_id: int) -> bool:
-    """Check if user has sent a join request to the channel."""
     return (str(user_id), str(channel_id)) in JOIN_REQUESTS_DICT
 
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Check if the user is subscribed to all required channels or has sent join requests."""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -370,7 +345,7 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 continue
             else:
                 unsubscribed_channels.append(button)
-            await asyncio.sleep(0.1)  # Add 100ms delay to avoid rate limits
+            await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(f"Error checking subscription for channel {channel_id}: {e}")
             unsubscribed_channels.append(button)
@@ -379,7 +354,6 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data['subscription_confirmed'] = True
         logger.info(f"User {user_id} successfully confirmed subscription for all channels.")
 
-        # Process referral reward
         referrer_id = context.user_data.get('referrer_id')
         if referrer_id:
             referrer_data = get_user_data(referrer_id)
@@ -417,9 +391,8 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             query.message.chat_id,
             query.message.message_id,
             success_text,
-            reply_markup=None  # Inline keyboard not needed here
+            reply_markup=None
         )
-        # Отправляем основное меню или сохраняем клавиатуру поиска
         if not context.user_data.get('awaiting_code', False):
             await send_message_with_retry(
                 query.message,
@@ -444,11 +417,9 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
 def get_user_data(user_id: int) -> Optional[Dict[str, str]]:
-    """Retrieve user data from cache."""
     return USER_DICT.get(str(user_id))
 
 async def add_user(user_id: int, username: str, first_name: str, search_queries: int, invited_users: int) -> None:
-    """Add a new user to Users sheet and update cache incrementally."""
     if user_sheet is None:
         logger.error("Users sheet not initialized.")
         return
@@ -456,7 +427,6 @@ async def add_user(user_id: int, username: str, first_name: str, search_queries:
         user_id_str = str(user_id)
         row_to_add = [user_id_str, username, first_name, str(search_queries), str(invited_users)]
         await user_sheet.append_row(row_to_add)
-        # Update cache incrementally
         USER_DICT[user_id_str] = {
             "user_id": user_id_str,
             "username": username,
@@ -469,14 +439,13 @@ async def add_user(user_id: int, username: str, first_name: str, search_queries:
         logger.error(f"Failed to add user {user_id} to Users sheet: {e}")
 
 async def update_user(user_id: int, **kwargs) -> None:
-    """Update user data in Users sheet and cache incrementally."""
     if user_sheet is None:
         logger.error("Users sheet not initialized.")
         return
     try:
         user_id_str = str(user_id)
         all_values = await user_sheet.get_all_values()
-        for idx, row in enumerate(all_values[1:], start=2):  # Skip header
+        for idx, row in enumerate(all_values[1:], start=2):
             if not row or len(row) < 1 or row[0] != user_id_str:
                 continue
             updates = {
@@ -493,7 +462,6 @@ async def update_user(user_id: int, **kwargs) -> None:
                 str(updates["search_queries"]),
                 str(updates["invited_users"])
             ]])
-            # Update cache incrementally
             USER_DICT[user_id_str] = {
                 "user_id": user_id_str,
                 "username": updates["username"],
@@ -508,18 +476,15 @@ async def update_user(user_id: int, **kwargs) -> None:
         logger.error(f"Failed to update user {user_id}: {e}")
 
 async def add_join_request(user_id: int, channel_id: int) -> None:
-    """Add a join request to JoinRequests sheet and update cache incrementally."""
     if join_requests_sheet is None:
         logger.error("JoinRequests sheet not initialized.")
         return
     try:
         user_id_str, channel_id_str = str(user_id), str(channel_id)
         if (user_id_str, channel_id_str) in JOIN_REQUESTS_DICT:
-            return  # Already exists
+            return
         await join_requests_sheet.append_row([user_id_str, channel_id_str])
-        # Update cache incrementally
         JOIN_REQUESTS_DICT[(user_id_str, channel_id_str)] = True
-        # Limit to 10,000 entries
         if len(JOIN_REQUESTS_DICT) > 10000:
             oldest_key = next(iter(JOIN_REQUESTS_DICT))
             del JOIN_REQUESTS_DICT[oldest_key]
@@ -528,13 +493,11 @@ async def add_join_request(user_id: int, channel_id: int) -> None:
         logger.error(f"Failed to add join request for user {user_id} to channel {channel_id}: {e}")
 
 def find_movie_by_code(code: str) -> Optional[Dict[str, str]]:
-    """Find a movie by its code in cached MOVIE_DICT."""
     if code in MOVIE_DICT:
         return {"code": code, "title": MOVIE_DICT[code]}
     return None
 
 async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle numeric movie code input."""
     code = update.message.text.strip()
     user_id = update.message.from_user.id
 
@@ -548,7 +511,6 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await send_message_with_retry(update.message, "Ой, нужен *только числовой код*! 😊 Введи цифры, и мы найдём твой фильм! 🔢", reply_markup=get_search_reply_keyboard())
         return
 
-    # Check search queries
     user_data = get_user_data(user_id)
     if not user_data:
         logger.error(f"User {user_id} not found in Users sheet.")
@@ -569,7 +531,6 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     movie = find_movie_by_code(code)
     context.user_data['awaiting_code'] = False
     if movie:
-        # Decrement search queries
         await update_user(user_id, search_queries=search_queries - 1)
         result_text = (
             f"*Бинго!* 🎥 Код {code}: *{escape_markdown_v2(movie['title'])}* {random.choice(POSITIVE_EMOJIS)}\n"
@@ -581,7 +542,6 @@ async def handle_movie_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await send_message_with_retry(update.message, result_text, reply_markup=get_main_reply_keyboard())
 
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle custom button presses from reply keyboard."""
     if update.message and update.message.from_user:
         user_id = update.message.from_user.id
         text = update.message.text
@@ -616,7 +576,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             user_data = get_user_data(user_id)
             if not user_data:
                 logger.error(f"User {user_id} not found in Users sheet.")
-                await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота.", reply_markup=get_main_reply_keyboard(), parse_mode='Markdown')
+                await send_message_with_retry(update.message, "Упс, не удалось получить твои данные! 😢 Перезапусти бота.", reply_markup=get_main_reply_keyboard())
                 return
             referral_link = f"https://t.me/{BOT_USERNAME}?start=invite_{user_id}"
             logger.info(f"Generated referral link for user {user_id}: {referral_link}")
@@ -660,14 +620,12 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
 async def handle_non_button_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle non-button text input."""
     if update.message.from_user.id == context.bot.id:
         return
     logger.info(f"User {update.message.from_user.id} sent non-button text: {update.message.text}")
     await send_message_with_retry(update.message, "Ой, *неизвестная команда*! 😕 Пожалуйста, выбери действие из меню! 👇", reply_markup=get_main_reply_keyboard())
 
 async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle chat join request updates."""
     join_request = update.chat_join_request
     user = join_request.from_user
     user_id = user.id
@@ -677,7 +635,6 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info(f"User {user_id} sent join request to channel {chat_id}")
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle errors gracefully."""
     logger.error(f"Update {update} caused error: {context.error}")
     if update.callback_query:
         await update.callback_query.answer()
@@ -695,11 +652,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
 
 async def main():
-    """Initialize the bot, load caches, and start polling."""
-    # Initialize Google Sheets
     await init_google_sheets()
-
-    # Add handlers
     application_tg.add_error_handler(error_handler)
     application_tg.add_handler(CommandHandler("start", start))
     application_tg.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
@@ -707,28 +660,26 @@ async def main():
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
     application_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^\d+$'), handle_non_button_text))
     application_tg.add_handler(ChatJoinRequestHandler(handle_join_request))
-
-    # Load initial caches
     await load_movie_cache()
     await load_user_cache()
     await load_join_requests_cache()
-
-    # Start periodic cache refresh tasks
     asyncio.create_task(refresh_movie_cache_periodically())
     asyncio.create_task(refresh_other_caches_periodically())
     asyncio.create_task(log_cache_size())
     logger.info("Started periodic cache refresh and logging tasks.")
-
-    # Start polling
     logger.info("Starting bot with polling...")
     await application_tg.initialize()
     await application_tg.start()
+    try:
+        await application_tg.bot.get_updates(timeout=0)
+        logger.info("No conflicting instances detected.")
+    except telegram.error.Conflict:
+        logger.error("Another instance of the bot is running! Stopping this instance...")
+        sys.exit(1)
     await application_tg.updater.start_polling()
     logger.info("Bot started successfully. Polling for updates...")
-
-    # Keep the bot running
     while True:
-        await asyncio.sleep(3600)  # Sleep to keep the main coroutine alive
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     asyncio.run(main())
