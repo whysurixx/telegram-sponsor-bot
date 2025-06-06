@@ -17,6 +17,7 @@ from typing import Optional, Dict, List
 import telegram
 from tenacity import retry, stop_after_attempt, wait_fixed
 from cachetools import LRUCache
+from aiohttp import web
 
 # Configure logging
 logging.basicConfig(
@@ -29,8 +30,8 @@ logger.info(f"python-telegram-bot version: {telegram.__version__}")
 
 # Configuration from environment variables
 TOKEN = os.environ.get("BOT_TOKEN")
-GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")  # Содержимое JSON как строка
-GOOGLE_CREDENTIALS_PATH = "google-credentials.json"  # Временный путь для файла
+GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+GOOGLE_CREDENTIALS_PATH = "google-credentials.json"
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 
 if BOT_USERNAME and BOT_USERNAME.startswith("@"):
@@ -76,16 +77,13 @@ OTHER_CACHE_REFRESH_INTERVAL = 300
 async def init_google_sheets():
     global movie_sheet, user_sheet, join_requests_sheet
     try:
-        # Если передали содержимое JSON через переменную окружения
         if GOOGLE_CREDENTIALS_JSON:
             logger.info("Using Google credentials from GOOGLE_CREDENTIALS_JSON environment variable.")
             credentials_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
-            # Создаём временный файл для credentials
             with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as temp_file:
                 json.dump(credentials_dict, temp_file)
                 temp_file_path = temp_file.name
         else:
-            # Проверяем наличие файла
             if not os.path.exists(GOOGLE_CREDENTIALS_PATH):
                 logger.error(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
                 raise FileNotFoundError(f"Credentials file not found at: {GOOGLE_CREDENTIALS_PATH}")
@@ -121,7 +119,6 @@ async def init_google_sheets():
             logger.info(f"Created new 'JoinRequests' worksheet (ID: {JOIN_REQUESTS_SHEET_ID}).")
         logger.info(f"Join Requests sheet initialized (ID: {JOIN_REQUESTS_SHEET_ID}).")
 
-        # Удаляем временный файл, если использовали GOOGLE_CREDENTIALS_JSON
         if GOOGLE_CREDENTIALS_JSON:
             os.unlink(temp_file_path)
             logger.info(f"Temporary credentials file deleted: {temp_file_path}")
@@ -134,7 +131,6 @@ async def init_google_sheets():
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def load_movie_cache():
-    """Load movie data into cache from Google Sheets incrementally."""
     global MOVIE_DICT
     try:
         last_row = getattr(load_movie_cache, "last_row", 0)
@@ -156,7 +152,6 @@ async def load_movie_cache():
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def load_user_cache():
-    """Load user data into cache from Google Sheets."""
     global USER_DICT
     try:
         all_values = await user_sheet.get_all_values()
@@ -177,7 +172,6 @@ async def load_user_cache():
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def load_join_requests_cache():
-    """Load join requests into cache from Google Sheets."""
     global JOIN_REQUESTS_DICT
     try:
         all_values = await join_requests_sheet.get_all_values()
@@ -191,7 +185,6 @@ async def load_join_requests_cache():
         logger.error(f"Error loading join requests cache: {e}")
 
 async def log_cache_size():
-    """Log the memory size of caches periodically."""
     while True:
         try:
             movie_size = sys.getsizeof(MOVIE_DICT) + sum(sys.getsizeof(k) + sys.getsizeof(v) for k, v in MOVIE_DICT.items())
@@ -204,7 +197,6 @@ async def log_cache_size():
             await asyncio.sleep(3600)
 
 async def refresh_movie_cache_periodically():
-    """Periodically refresh movie cache in the background."""
     while True:
         try:
             await load_movie_cache()
@@ -214,7 +206,6 @@ async def refresh_movie_cache_periodically():
             await asyncio.sleep(MOVIE_CACHE_REFRESH_INTERVAL)
 
 async def refresh_other_caches_periodically():
-    """Periodically refresh user and join requests caches in the background."""
     while True:
         try:
             await load_user_cache()
@@ -672,6 +663,16 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             reply_markup=get_main_reply_keyboard()
         )
 
+async def webhook(request):
+    """Handle incoming Telegram webhook updates."""
+    try:
+        update = Update.de_json(await request.json(), application_tg.bot)
+        await application_tg.process_update(update)
+        return web.Response(status=200)
+    except Exception as e:
+        logger.error(f"Error processing webhook update: {e}")
+        return web.Response(status=500)
+
 async def main():
     await init_google_sheets()
     application_tg.add_error_handler(error_handler)
@@ -687,31 +688,30 @@ async def main():
     asyncio.create_task(refresh_movie_cache_periodically())
     asyncio.create_task(refresh_other_caches_periodically())
     asyncio.create_task(log_cache_size())
-    logger.info("Started periodic cache refresh and logging tasks.")
-    logger.info("Starting bot with polling...")
+    logger.info("Starting bot with webhook...")
+
+    # Initialize the application
     await application_tg.initialize()
     await application_tg.start()
-    try:
-        await application_tg.bot.get_updates(timeout=0)
-        logger.info("No conflicting instances detected.")
-    except telegram.error.Conflict as e:
-        logger.error(f"Another instance of the bot is running! Conflict error: {e}. Stopping this instance...")
-        # Попробуем удалить Webhook, если он установлен
-        try:
-            await application_tg.bot.delete_webhook()
-            logger.info("Webhook deleted. Retrying polling...")
-            await application_tg.updater.start_polling()
-        except Exception as delete_error:
-            logger.error(f"Failed to delete webhook: {delete_error}. Please check manually.")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error during initialization: {e}")
-        sys.exit(1)
-    await application_tg.updater.start_polling()
-    logger.info("Bot started successfully. Polling for updates...")
+
+    # Set up the webhook
+    port = int(os.environ.get("PORT", 8443))
+    webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+    await application_tg.bot.set_webhook(url=webhook_url)
+    logger.info(f"Webhook set to {webhook_url}")
+
+    # Start the web server
+    app = web.Application()
+    app.router.add_post('/webhook', webhook)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logger.info(f"Webhook server started on port {port}")
+
+    # Keep the bot running
     while True:
         await asyncio.sleep(3600)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
