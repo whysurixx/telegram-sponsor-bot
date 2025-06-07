@@ -283,11 +283,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             await add_user(user_id, username, first_name, search_queries=5, invited_users=0)
             logger.info(f"Added user {user_id} to Users sheet with 5 search queries.")
+            await load_user_cache()  # Обновляем кэш после добавления
         except Exception as e:
             logger.error(f"Failed to add user {user_id} to Users sheet: {e}")
     else:
-        await update_user(user_id, username=username, first_name=first_name)
-        logger.info(f"Updated existing user {user_id}.")
+        try:
+            await update_user(user_id, username=username, first_name=first_name)
+            logger.info(f"Updated existing user {user_id}.")
+        except Exception as e:
+            logger.error(f"Failed to update user {user_id}: {e}")
 
     welcome_text = (
         "Привет, *киноман*! 🎬\n"
@@ -296,6 +300,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Выбери действие в меню ниже, и начнём приключение! 😎"
     )
     await send_message_with_retry(update.message, welcome_text, reply_markup=get_main_reply_keyboard())
+
 
 async def send_message_with_retry(message, text: str, reply_markup=None, parse_mode: str = 'Markdown') -> None:
     try:
@@ -637,7 +642,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             referral_text = (
                 "<b>🔥 Реферальная система 🔥</b>\n\n"
                 "Приглашай друзей и получай <b>+2 поиска</b> за каждого, кто перейдёт по твоей ссылке и подпишется на наши каналы! 🚀\n\n"
-                f"Твоя реферальная ссылка: <a href='{referral_link}'>{referral_link}</a>\n"
+                f"Твоя реферальная ссылка:\n<a href='{referral_link}'>{referral_link}</a>\n"
                 "Копируй свою реферальную ссылку и зови друзей! 😎\n\n"
                 f"👥 <b>Количество добавленных пользователей</b>: <b>{invited_users}</b>\n"
                 f"{search_queries_text}"
