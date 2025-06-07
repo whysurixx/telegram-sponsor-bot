@@ -471,6 +471,7 @@ async def update_user(user_id: int, **kwargs) -> None:
     try:
         user_id_str = str(user_id)
         all_values = await user_sheet.get_all_values()
+        logger.info(f"Searching for user {user_id_str} in Users sheet. Total rows: {len(all_values)}")
         for idx, row in enumerate(all_values[1:], start=2):
             if not row or len(row) < 1 or row[0] != user_id_str:
                 continue
@@ -481,6 +482,7 @@ async def update_user(user_id: int, **kwargs) -> None:
                 "invited_users": row[4] if len(row) > 4 else "0"
             }
             updates.update(kwargs)
+            logger.info(f"Updating user {user_id_str} with new values: {updates}")
             await user_sheet.update(f"A{idx}:E{idx}", [[
                 user_id_str,
                 updates["username"],
@@ -495,11 +497,13 @@ async def update_user(user_id: int, **kwargs) -> None:
                 "search_queries": str(updates["search_queries"]),
                 "invited_users": str(updates["invited_users"])
             }
-            logger.info(f"Updated user {user_id} in Users sheet.")
+            logger.info(f"Successfully updated user {user_id} in Users sheet and cache.")
+            await load_user_cache()  # Принудительно обновляем кэш
             return
-        logger.warning(f"User {user_id} not found for update.")
+        logger.warning(f"User {user_id} not found in Users sheet for update.")
     except Exception as e:
         logger.error(f"Failed to update user {user_id}: {e}")
+
 
 async def add_join_request(user_id: int, channel_id: int) -> None:
     if join_requests_sheet is None:
